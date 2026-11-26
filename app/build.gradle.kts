@@ -6,10 +6,10 @@ plugins {
 }
 
 android {
-    namespace = "com.example.myapp"
+    namespace = "com.nekosu.manager"
     compileSdk = 37
     defaultConfig {
-        applicationId = "com.manager.mochi"
+        applicationId = "com.nekosu.manager"
         minSdk = 24
         targetSdk = 37
         versionCode = 1
@@ -26,6 +26,12 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+
     buildFeatures {
         compose = true
         aidl = false
@@ -42,6 +48,14 @@ android {
 
 kotlin {
     jvmToolchain(17)
+}
+
+// 仅用于本地 Robolectric 渲染验证：mochi-compose 依赖的 com.kyant:capsule 是 Java 21 字节码，
+// 测试 JVM 需要 21 才能加载（编译产物仍为 Java 17，Android 侧由 D8 处理）。
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    val jdk21 = file("/opt/jdk-21.0.13.1+2/bin/java")
+    if (jdk21.exists()) executable = jdk21.absolutePath
+    maxHeapSize = "2g"
 }
 
 dependencies {
@@ -77,6 +91,10 @@ dependencies {
 
     // Local tests: jUnit, coroutines, Android runner
     testImplementation(libs.junit)
+    testImplementation("org.robolectric:robolectric:4.16")
+    testImplementation("androidx.test:core:1.7.0")
+    testImplementation("androidx.test.ext:junit:1.3.0")
+    testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.kotlinx.coroutines.test)
 
     // Instrumented tests: jUnit rules and runners
