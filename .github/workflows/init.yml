@@ -1,8 +1,7 @@
 name: Create Empty Android Project
 
 on:
-  workflow_dispatch:  # 手动触发
-  push:
+  workflow_dispatch:
     branches: [ main ]
 
 jobs:
