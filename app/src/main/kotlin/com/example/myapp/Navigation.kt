@@ -1,6 +1,5 @@
 package com.example.myapp
 
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -26,9 +25,6 @@ import com.example.myapp.ui.main.MainScreen
 private val topLevelTabs: List<AppRoute> =
     listOf(
         AppRoute.Home,
-        AppRoute.Apps,
-        AppRoute.Rules,
-        AppRoute.Settings,
     )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -74,9 +70,7 @@ fun MainNavigation(modifier: Modifier = Modifier) {
                             }
                         }
                     },
-                    modifier =
-                        Modifier
-                            .navigationBarsPadding(),
+                    modifier = Modifier.navigationBarsPadding(),
                 )
             }
         },
@@ -101,32 +95,6 @@ fun MainNavigation(modifier: Modifier = Modifier) {
                             },
                         )
                     }
-                    entry<AppRoute.Apps> {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            Text("应用")
-                        }
-                    }
-                    entry<AppRoute.Rules> {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            Text("规则")
-                        }
-                    }
-                    entry<AppRoute.Settings> {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            Text("设置")
-                        }
-                    }
-       /*         entry<AppRoute.Detail> { key ->
-                    // 详情页自行处理自身 TopBar 和返回回调
-                  DetailScreen(
-                        itemId = key.itemId,
-                        onBack = {
-                            if (backStack.size > 1) {
-                                backStack.removeLastOrNull()
-                            }
-                        }
-                    )
-                }*/
                 },
         )
     }
