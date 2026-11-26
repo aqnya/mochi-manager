@@ -18,6 +18,7 @@ import ui.feice.mochi.basic.MochiTabItem
 import ui.feice.mochi.basic.rememberMochiTabBarScrollBehavior
 import ui.feice.mochi.icons.MochiIonicon
 import ui.feice.mochi.navigation.MochiTabScaffold
+import com.example.myapp.ui.main.MainScreen
 
 private val TabIcons = listOf("home")
 
@@ -33,9 +34,6 @@ fun MainBottomNavBar(
     onSelectIndex: (Int) -> Unit,
     modifier: Modifier = Modifier,
     scrollBehavior: MochiTabBarScrollBehavior = rememberMochiTabBarScrollBehavior(),
-    onHomeContent: @Composable () -> Unit = {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("首页") }
-    },
 ) {
     val tabTitles = remember { listOf("首页") }
     val tabs =
@@ -56,7 +54,7 @@ fun MainBottomNavBar(
         collapseOnScroll = false,
     ) { page ->
         when (page) {
-            0 -> onHomeContent()
+            0 -> MainScreen()
         }
     }
 }
