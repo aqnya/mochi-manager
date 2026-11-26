@@ -1,5 +1,6 @@
 package com.nekosu.manager.ui.profile
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -58,6 +59,9 @@ fun AppProfileScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    // 系统返回手势（侧滑/返回键）：二级页在页内拦截，返回列表而不是退出整个应用。
+    // targetSdk 35+ 强制启用 predictive back，未注册回调的层级会直接 finish Activity。
+    BackHandler { onBack() }
     LaunchedEffect(Unit) { SuProfileStore.init(context) }
     val store by SuProfileStore.profiles.collectAsState()
     val profile = store[app.packageName] ?: SuProfile.default(app.packageName)
