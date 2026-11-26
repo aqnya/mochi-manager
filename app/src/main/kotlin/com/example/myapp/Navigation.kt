@@ -110,13 +110,13 @@ fun MainNavigation(modifier: Modifier = Modifier) {
                 }
                 entry<AppRoute.Detail> { key ->
                     // 详情页自行处理自身 TopBar 和返回回调
-                    DetailScreen(
+                 /*   DetailScreen(
                         itemId = key.itemId,
                         onBack = {
                             if (backStack.size > 1) {
                                 backStack.removeLastOrNull()
                             }
-                        }
+                        }*/
                     )
                 }
             }
