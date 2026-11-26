@@ -42,11 +42,10 @@ fun MainNavigation(modifier: Modifier = Modifier) {
             if (showBottomBar) {
                 CenterAlignedTopAppBar(
                     title = { Text(stringResource(R.string.app_name)) },
-                    colors =
-                        TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            titleContentColor = MaterialTheme.colorScheme.primary,
-                        ),
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    ),
                 )
             }
         },
@@ -68,33 +67,33 @@ fun MainNavigation(modifier: Modifier = Modifier) {
                             }
                         }
                     },
-                    onNavigate = { navKey -> backStack.add(navKey) },
-                    modifier = Modifier.navigationBarsPadding(),
+                    modifier = Modifier
+                        .navigationBarsPadding()
+                        .padding(bottom = 6.dp),
                 )
             }
         },
     ) { innerPadding ->
         NavDisplay(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
             backStack = backStack,
             onBack = {
                 if (backStack.size > 1) {
                     backStack.removeLastOrNull()
                 }
             },
-            entryProvider =
-                entryProvider {
-                    entry<AppRoute.Home> {
-                        MainScreen(
-                            onItemClick = { _ ->
-                                backStack.add(AppRoute.Home)
-                            },
-                        )
-                    }
-                },
+            entryProvider = entryProvider {
+                entry<AppRoute.Home> {
+                    MainScreen(
+                        onItemClick = { itemId ->
+                            // 后续有 Detail 路由时改为 backStack.add(AppRoute.Detail(itemId))
+                        },
+                        bottomBarClearance = 16.dp, // Scaffold 已处理底栏高度，这里只需少量额外留白
+                    )
+                }
+            },
         )
     }
 }

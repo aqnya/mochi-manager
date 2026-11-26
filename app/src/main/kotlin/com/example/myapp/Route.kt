@@ -29,34 +29,23 @@ fun MainBottomNavBar(
     selectedIndex: Int,
     onSelectIndex: (Int) -> Unit,
     modifier: Modifier = Modifier,
-    onNavigate: (NavKey) -> Unit = {},
     scrollBehavior: MochiTabBarScrollBehavior = rememberMochiTabBarScrollBehavior(),
 ) {
-    val tabTitles = remember { listOf("首页") }
-    val tabs =
-        remember {
-            tabTitles.mapIndexed { index, title ->
-                val iconName = TabIcons[index]
-                MochiTabItem(
-                    label = title,
-                    icon = { tint -> MochiIonicon(iconName, tint = tint, size = 22.dp) },
-                )
-            }.toImmutableList()
-        }
+    val tabTitles = remember { listOf("首页", "应用", "规则", "设置") }
+    val items = remember {
+        tabTitles.mapIndexed { index, title ->
+            MochiTabItem(label = title) { tint ->
+                MochiIonicon(TabIcons[index], tint = tint, size = 22.dp)
+            }
+        }.toImmutableList()
+    }
 
     MochiTabScaffold(
-        items = tabs,
+        items = items,
         modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         behavior = MochiTabBarDefaults.behavior(),
         collapseOnScroll = false,
-    ) { page ->
-        when (page) {
-            0 ->
-                MainScreen(
-                    onItemClick = { _ ->
-                        onNavigate(AppRoute.Home)
-                    },
-                )
-        }
+    ) { _ ->
+        // 页面由外层 NavDisplay 渲染，此处留空避免遮挡或重复绘制
     }
 }
