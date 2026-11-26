@@ -54,7 +54,7 @@ fun MainBottomNavBar(
         collapseOnScroll = false,
     ) { page ->
         when (page) {
-            0 -> MainScreen()
+            0 -> MainScreen(onItemClick = { itemId -> onNavigate(AppRoute.Home(itemId)) })
         }
     }
 }
