@@ -70,7 +70,9 @@ fun MainNavigation(modifier: Modifier = Modifier) {
                                 backStack[backStack.lastIndex] = target
                             }
                         }
-                    }
+                    },
+                    modifier = Modifier
+        .navigationBarsPadding(),
                 )
             }
         }
