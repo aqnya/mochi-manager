@@ -91,7 +91,7 @@ fun MainNavigation(modifier: Modifier = Modifier) {
                     entry<AppRoute.Home> {
                         MainScreen(
                             onItemClick = { itemId ->
-                                backStack.add(AppRoute.Home(itemId = itemId))
+                                backStack.add(AppRoute.Home)
                             },
                         )
                     }
