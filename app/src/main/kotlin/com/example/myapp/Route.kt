@@ -1,8 +1,12 @@
 package com.example.myapp
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.NavKey
@@ -42,6 +46,18 @@ fun MainBottomNavBar(
     onSelectIndex: (Int) -> Unit,
     modifier: Modifier = Modifier,
     scrollBehavior: MochiTabBarScrollBehavior = rememberMochiTabBarScrollBehavior(),
+    onHomeContent: @Composable () -> Unit = {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("首页") }
+    },
+    onAppsContent: @Composable () -> Unit = {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("应用") }
+    },
+    onRulesContent: @Composable () -> Unit = {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("规则") }
+    },
+    onSettingsContent: @Composable () -> Unit = {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("设置") }
+    },
 ) {
     val tabs =
         remember {
@@ -69,19 +85,17 @@ fun MainBottomNavBar(
             ).toImmutableList()
         }
 
-/*    MochiTabBar(
-        selectedIndex = selectedIndex,
-        onSelect = onSelectIndex,
-
-
-        scrollBehavior = scrollBehavior,
-
-        windowInsets = WindowInsets(0),
-    )*/
     MochiTabScaffold(
         items = tabs,
         modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         behavior = MochiTabBarDefaults.behavior(),
         collapseOnScroll = false,
-    )
+    ) { page ->
+        when (page) {
+            0 -> onHomeContent()
+            1 -> onAppsContent()
+            2 -> onRulesContent()
+            else -> onSettingsContent()
+        }
+    }
 }
