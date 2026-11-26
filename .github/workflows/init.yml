@@ -27,7 +27,7 @@ jobs:
           mkdir -p MyApp
           cd MyApp
           # 使用官方 Android CLI 创建空 Activity 项目
-          android create empty-activity --name=MyApp --package-name=com.manager.mochi
+          android create empty-activity --name=MyApp --application-id=com.manager.mochi
 
       - name: Build the project
         run: |
