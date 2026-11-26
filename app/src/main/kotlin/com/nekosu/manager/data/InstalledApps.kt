@@ -32,6 +32,13 @@ data class InstalledApp(
     val hasLauncher: Boolean,
     val installTime: Long,
     val enabled: Boolean,
+    /**
+     * 清单里的 `android:sharedUserId`。声明了它的应用会和别的包共用 uid，
+     * 授权按 uid 生效，所以列表要按它归组（见 [AppGroup]）。
+     */
+    val sharedUserId: String? = null,
+    /** `sharedUserLabel` 解析出的名字，HyperOS 的「小米服务框架」这类套件会用到。 */
+    val sharedLabel: String? = null,
 )
 
 /**
@@ -69,6 +76,8 @@ object InstalledAppsRepository {
                         hasLauncher = ai.packageName in launcherPackages,
                         installTime = info.firstInstallTime,
                         enabled = ai.enabled,
+                        sharedUserId = info.sharedUserId,
+                        sharedLabel = sharedLabelOf(pm, info, ai),
                     )
                 }.toList()
                 .sortedWith { a, b -> collator.compare(a.label, b.label) }
@@ -106,6 +115,22 @@ object InstalledAppsRepository {
 
     /** PER_USER_RANGE = 100000，uid / 100000 即 userId；HyperOS 的分身 profile 是 999。 */
     private fun userIdOf(uid: Int): Int = uid / 100_000
+
+    /**
+     * `sharedUserLabel` 是一个字符串资源 id，需要借应用自己的资源表解析（多语言下才会正确）。
+     * 解析失败就返回 null，界面会退回 sharedUserId / 主应用名。
+     */
+    private fun sharedLabelOf(
+        pm: PackageManager,
+        info: PackageInfo,
+        ai: ApplicationInfo,
+    ): String? {
+        val resId = info.sharedUserLabel
+        if (resId == 0) return null
+        return runCatching { pm.getText(ai.packageName, resId, ai)?.toString() }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+    }
 
     /** API 35 起才有「应用压缩」，低版本走不到这个方法体。 */
     @Suppress("NewApi")

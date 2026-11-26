@@ -2,22 +2,27 @@ package com.nekosu.manager.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * 单个应用的超级用户配置，字段对齐 KernelSU 的 AppProfile：
+ * 一个 uid（而不是一个包）的超级用户配置，字段对齐 KernelSU 的 AppProfile：
  * 是否放行、以什么身份运行（uid/gid/附加组）、能力位、命名空间、SELinux 域、是否卸载模块。
+ *
+ * 主键是 [appUid]：KernelSU 内核侧按 uid 存 profile，共享 uid 的多个包天然共用一份配置。
+ * [packageName] 只保存组里的代表包名，用于图标、名称与调试输出。
  *
  * 工程还没有 root 数据层，这里只做配置的本地存储与界面呈现，不会真正影响 su。
  */
 data class SuProfile(
     val packageName: String,
+    val appUid: Int,
     val allowSu: Boolean = false,
-    val uid: Int = 0,
-    val gid: Int = 0,
+    val runAsUid: Int = 0,
+    val runAsGid: Int = 0,
     val groups: Set<Int> = setOf(GROUP_ROOT),
     val capabilities: Set<String> = emptySet(),
     val namespace: Int = NAMESPACE_INHERIT,
@@ -27,10 +32,10 @@ data class SuProfile(
     /** 与默认值不同就算「自定义配置」，用于列表的 CUSTOM 标签与分组。 */
     val isCustom: Boolean
         get() =
-            uid != 0 || gid != 0 || groups != setOf(GROUP_ROOT) || capabilities.isNotEmpty() ||
+            runAsUid != 0 || runAsGid != 0 || groups != setOf(GROUP_ROOT) || capabilities.isNotEmpty() ||
                 namespace != NAMESPACE_INHERIT || umountModules || context != DEFAULT_CONTEXT
 
-    fun reset(): SuProfile = SuProfile(packageName)
+    fun reset(): SuProfile = SuProfile(packageName, appUid)
 
     companion object {
         const val GROUP_ROOT = 0
@@ -39,7 +44,10 @@ data class SuProfile(
         const val NAMESPACE_INDIVIDUAL = 2
         const val DEFAULT_CONTEXT = "u:r:su:s0"
 
-        fun default(packageName: String) = SuProfile(packageName)
+        fun default(
+            packageName: String,
+            appUid: Int,
+        ) = SuProfile(packageName, appUid)
     }
 }
 
@@ -79,28 +87,35 @@ val SuCapabilities =
         SuCapability("CAP_SETGID", "切换用户组 ID"),
     )
 
-/** 配置的本地存储，按包名索引。 */
+/**
+ * 配置的本地存储，按 **应用 uid** 索引。
+ *
+ * 旧版本的 key 是包名，[init] 会把这批数据迁移到 uid（用 PackageManager 反查），
+ * 这样共享 uid 的应用不必各自保存一份、也不会出现组内状态不一致。
+ */
 object SuProfileStore {
     private const val PREFS = "neko_su_profiles"
     private const val KEY_PROFILES = "profiles"
 
     private var prefs: SharedPreferences? = null
-    private val _profiles = MutableStateFlow<Map<String, SuProfile>>(emptyMap())
-    val profiles: StateFlow<Map<String, SuProfile>> = _profiles
+    private val _profiles = MutableStateFlow<Map<Int, SuProfile>>(emptyMap())
+    val profiles: StateFlow<Map<Int, SuProfile>> = _profiles
 
     fun init(context: Context) {
         if (prefs != null) return
         val p = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs = p
-        _profiles.value = decode(p.getString(KEY_PROFILES, null))
+        val (loaded, migrated) = decode(p.getString(KEY_PROFILES, null), context.packageManager)
+        _profiles.value = loaded
+        if (migrated) p.edit().putString(KEY_PROFILES, encode(loaded)).apply()
     }
 
     fun get(
         context: Context,
-        packageName: String,
-    ): SuProfile {
+        uid: Int,
+    ): SuProfile? {
         init(context)
-        return _profiles.value[packageName] ?: SuProfile.default(packageName)
+        return _profiles.value[uid]
     }
 
     fun save(
@@ -108,30 +123,31 @@ object SuProfileStore {
         profile: SuProfile,
     ) {
         init(context)
-        val next = _profiles.value.toMutableMap().apply { put(profile.packageName, profile) }
+        val next = _profiles.value.toMutableMap().apply { put(profile.appUid, profile) }
         _profiles.value = next
         prefs?.edit()?.putString(KEY_PROFILES, encode(next))?.apply()
     }
 
     fun reset(
         context: Context,
-        packageName: String,
+        uid: Int,
     ) {
         init(context)
-        val next = _profiles.value.toMutableMap().apply { remove(packageName) }
+        val next = _profiles.value.toMutableMap().apply { remove(uid) }
         _profiles.value = next
         prefs?.edit()?.putString(KEY_PROFILES, encode(next))?.apply()
     }
 
-    private fun encode(profiles: Map<String, SuProfile>): String =
+    private fun encode(profiles: Map<Int, SuProfile>): String =
         JSONArray().apply {
             profiles.values.forEach { p ->
                 put(
                     JSONObject().apply {
+                        put("appUid", p.appUid)
                         put("pkg", p.packageName)
                         put("allowSu", p.allowSu)
-                        put("uid", p.uid)
-                        put("gid", p.gid)
+                        put("runAsUid", p.runAsUid)
+                        put("runAsGid", p.runAsGid)
                         put("groups", JSONArray(p.groups.toList()))
                         put("caps", JSONArray(p.capabilities.toList()))
                         put("namespace", p.namespace)
@@ -142,32 +158,57 @@ object SuProfileStore {
             }
         }.toString()
 
-    private fun decode(raw: String?): Map<String, SuProfile> {
-        if (raw.isNullOrBlank()) return emptyMap()
-        return runCatching {
-            val array = JSONArray(raw)
-            buildMap {
-                for (i in 0 until array.length()) {
-                    val o = array.getJSONObject(i)
-                    val pkg = o.getString("pkg")
-                    put(
-                        pkg,
-                        SuProfile(
-                            packageName = pkg,
-                            allowSu = o.optBoolean("allowSu", false),
-                            uid = o.optInt("uid", 0),
-                            gid = o.optInt("gid", 0),
-                            groups = o.optJSONArray("groups").toIntSet(setOf(SuProfile.GROUP_ROOT)),
-                            capabilities = o.optJSONArray("caps").toStringSet(),
-                            namespace = o.optInt("namespace", SuProfile.NAMESPACE_INHERIT),
-                            umountModules = o.optBoolean("umount", false),
-                            context = o.optString("context", SuProfile.DEFAULT_CONTEXT),
-                        ),
-                    )
+    /** @return 解析结果 + 是否需要回写（有旧格式被迁移时）。 */
+    private fun decode(
+        raw: String?,
+        pm: PackageManager,
+    ): Pair<Map<Int, SuProfile>, Boolean> {
+        if (raw.isNullOrBlank()) return emptyMap<Int, SuProfile>() to false
+        var migrated = false
+        val result =
+            runCatching {
+                val array = JSONArray(raw)
+                buildMap {
+                    for (i in 0 until array.length()) {
+                        val o = array.getJSONObject(i)
+                        val pkg = o.optString("pkg")
+                        if (pkg.isBlank()) continue
+                        var appUid = o.optInt("appUid", 0)
+                        if (appUid == 0) {
+                            // 旧格式（按包名存储）：反查这个包的 uid，查不到就丢掉这条
+                            appUid = packageUid(pm, pkg)
+                            if (appUid == 0) continue
+                            migrated = true
+                        }
+                        // 新 key 优先；旧字段 uid/gid 表示运行身份
+                        val runAsUid = o.optInt("runAsUid", o.optInt("uid", 0))
+                        val runAsGid = o.optInt("runAsGid", o.optInt("gid", 0))
+                        put(
+                            appUid,
+                            SuProfile(
+                                packageName = pkg,
+                                appUid = appUid,
+                                allowSu = o.optBoolean("allowSu", false),
+                                runAsUid = runAsUid,
+                                runAsGid = runAsGid,
+                                groups = o.optJSONArray("groups").toIntSet(setOf(SuProfile.GROUP_ROOT)),
+                                capabilities = o.optJSONArray("caps").toStringSet(),
+                                namespace = o.optInt("namespace", SuProfile.NAMESPACE_INHERIT),
+                                umountModules = o.optBoolean("umount", false),
+                                context = o.optString("context", SuProfile.DEFAULT_CONTEXT),
+                            ),
+                        )
+                    }
                 }
-            }
-        }.getOrDefault(emptyMap())
+            }.getOrDefault(emptyMap())
+        return result to migrated
     }
+
+    @Suppress("DEPRECATION")
+    private fun packageUid(
+        pm: PackageManager,
+        packageName: String,
+    ): Int = runCatching { pm.getPackageUid(packageName, 0) }.getOrDefault(0)
 
     private fun JSONArray?.toIntSet(fallback: Set<Int>): Set<Int> {
         if (this == null) return fallback

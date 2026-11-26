@@ -24,7 +24,8 @@ export ANDROID_HOME=/path/to/android-sdk
 app/src/main/kotlin/com/nekosu/manager/
 ├── MainActivity.kt          入口，套 NekoSUTheme + MochiRoot
 ├── data/InstalledApps.kt    真实应用列表（PackageManager）+ 图标缓存
-├── data/SuProfile.kt        单个应用的超级用户配置（本地 JSON 存储）
+├── data/AppGroups.kt        按 uid 归并应用（共享 uid 组、代表应用、属主名）
+├── data/SuProfile.kt        按 uid 的超级用户配置（本地 JSON 存储，含旧包名数据迁移）
 ├── data/MockData.kt         仍为假数据的部分（设备信息、5 个模块）
 ├── ui/MochiRoot.kt          底部四 Tab 容器
 ├── ui/home/                 首页
@@ -42,6 +43,7 @@ app/src/main/kotlin/com/nekosu/manager/
 - 超级用户页的应用列表来自真实 PackageManager（见 data/InstalledApps.kt）；
   授权是本地 SharedPreferences 记录，没有写进 KernelSU 白名单。
 - 模块、设备信息仍是静态模拟；设置页开关只改本地状态。
+- 共享 uid 的应用合并为一行，配置按 uid 存取，组内所有包共用（见下文）；
 - 应用配置页已移植（点击超级用户列表任意一行进入）；模块仓库、安装/刷写、外观、Sulog、关于、WebUI 尚未移植。
 - 二级页面用 `MochiNavHost`：iOS 侧推转场 + 跟手侧滑返回（预测性返回），路由在 `ui/superuser/SuperUserFlow.kt`。
 - 依赖 `io.github.feice11:mochi-compose:0.3.0`，其 `com.kyant:capsule` 为 Java 21 字节码，
@@ -64,3 +66,18 @@ app/src/main/kotlin/com/nekosu/manager/
 | 返回刷新 | `ON_RESUME` 时重新加载，用户从系统设置改完回来立刻生效 |
 
 非小米设备或系统不支持动态申请时，只保留引导卡（文案切换成通用版本），不影响正常读取。
+
+## 共享 UID 应用（sharedUserId）
+
+KernelSU 的 su 白名单与 profile 都以 **uid** 为粒度，所以列表不能按包名平铺：
+
+| 环节 | 实现 |
+| --- | --- |
+| 归并 | `groupApps()` 按 `ApplicationInfo.uid` 分组，一组一行（`data/AppGroups.kt`） |
+| 代表应用 | `pickPrimary()`：优先 `sharedUserLabel`，其次 `android.uid.system/phone/bluetooth/nfc` 的固定映射，最后包名最短者 |
+| 标题 | `sharedUserLabel` 文案 > `android.uid.*` 的 sharedUserId > 主应用名 |
+| 副标题 | 共享时显示「包含 N 个应用 · UID x」；搜索命中时列出命中的包名 |
+| 配置存储 | `SuProfileStore` 用 uid 做主键，旧版按包名存的 JSON 在启动时用 `getPackageUid` 迁移 |
+| 配置页 | 共享 uid 时多一段「共享 UID 应用」列组员，并说明授权对整组生效 |
+
+这样 `android.uid.system` 这类组不会出现多行互相矛盾的开关，授权一次即整组生效。

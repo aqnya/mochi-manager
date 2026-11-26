@@ -20,7 +20,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.nekosu.manager.R
-import com.nekosu.manager.data.InstalledApp
+import com.nekosu.manager.data.AppGroup
 import com.nekosu.manager.data.SuCapabilities
 import com.nekosu.manager.data.SuGroups
 import com.nekosu.manager.data.SuProfile
@@ -49,11 +49,14 @@ import ui.feice.mochi.theme.MochiTheme
  * 应用配置页：对齐 KernelSU 的 AppProfile —— 先决定是否放行，再配置它拿到的是
  * 什么身份（uid/gid/附加组）、哪些能力位、命名空间和 SELinux 域，最后是卸载模块。
  *
+ * 这里的 [group] 是「一个 uid」而不是一个包：共享 uid 时配置会同时作用于组内所有应用，
+ * 所以页面上要明确列出组员，避免用户以为只改了当前这一个。
+ *
  * 所有改动即时写入 [SuProfileStore]，没有「保存」按钮，符合 iOS 设置页的习惯。
  */
 @Composable
 fun AppProfileScreen(
-    app: InstalledApp,
+    group: AppGroup,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -61,17 +64,39 @@ fun AppProfileScreen(
     // 返回手势交给外层的 MochiNavHost（PredictiveBackHandler 跟手转场），这里不再单独拦截
     LaunchedEffect(Unit) { SuProfileStore.init(context) }
     val store by SuProfileStore.profiles.collectAsState()
-    val profile = store[app.packageName] ?: SuProfile.default(app.packageName)
+    val default = SuProfile.default(group.primary.packageName, group.uid)
+    val profile = store[group.uid] ?: default
 
     fun update(next: SuProfile) = SuProfileStore.save(context, next)
 
     MochiLazyCompactTitleScaffold(
-        title = app.label,
-        subtitle = app.packageName,
+        title = group.title,
+        subtitle = if (group.shared) stringResource(R.string.group_shared_uid, group.uid) else group.primary.packageName,
         modifier = modifier,
         navigationIcon = { MochiBackButton(onClick = onBack) },
     ) {
-        item(key = "header") { ProfileHeader(app) }
+        item(key = "header") { ProfileHeader(group) }
+
+        if (group.shared) {
+            item(key = "shared") {
+                MochiListSection(header = stringResource(R.string.profile_section_shared)) {
+                    group.apps.forEach { member ->
+                        MochiListRow(
+                            member.label,
+                            subtitle = member.packageName,
+                            leading = { AppIcon(member.packageName, member.label, KsuTileColors.Blue, 28.dp) },
+                            leadingSize = 28.dp,
+                        )
+                    }
+                }
+            }
+            item(key = "shared-hint") {
+                MochiFootnote(
+                    stringResource(R.string.profile_shared_hint, group.uid),
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+            }
+        }
 
         item(key = "access") {
             MochiListSection(header = stringResource(R.string.profile_section_access)) {
@@ -88,11 +113,11 @@ fun AppProfileScreen(
         if (profile.allowSu) {
             item(key = "identity") {
                 MochiListSection(header = stringResource(R.string.profile_section_identity)) {
-                    NumberRow(stringResource(R.string.profile_uid), profile.uid) {
-                        update(profile.copy(uid = it))
+                    NumberRow(stringResource(R.string.profile_uid), profile.runAsUid) {
+                        update(profile.copy(runAsUid = it))
                     }
-                    NumberRow(stringResource(R.string.profile_gid), profile.gid) {
-                        update(profile.copy(gid = it))
+                    NumberRow(stringResource(R.string.profile_gid), profile.runAsGid) {
+                        update(profile.copy(runAsGid = it))
                     }
                     MultiSelectRow(
                         title = stringResource(R.string.profile_groups),
@@ -154,14 +179,14 @@ fun AppProfileScreen(
             }
         }
 
-        if (profile != SuProfile.default(app.packageName)) {
+        if (profile != default) {
             item(key = "reset") {
                 MochiListSection {
                     MochiListRow(
                         stringResource(R.string.profile_reset),
                         leading = { KsuTile("refresh", KsuTileColors.Red) },
                         destructive = true,
-                        onClick = { SuProfileStore.reset(context, app.packageName) },
+                        onClick = { SuProfileStore.reset(context, group.uid) },
                     )
                 }
             }
@@ -177,7 +202,8 @@ fun AppProfileScreen(
 }
 
 @Composable
-private fun ProfileHeader(app: InstalledApp) {
+private fun ProfileHeader(group: AppGroup) {
+    val app = group.primary
     Column(
         Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -185,12 +211,18 @@ private fun ProfileHeader(app: InstalledApp) {
     ) {
         AppIcon(app.packageName, app.label, KsuTileColors.Blue, 64.dp)
         Text(
-            app.label,
+            group.title,
             style = MochiTheme.textStyles.navTitle.copy(textAlign = TextAlign.Center),
             color = MochiTheme.colorScheme.onSurface,
         )
+        val meta =
+            buildList {
+                add("UID ${group.uid}")
+                if (group.userId != 0) add("USER ${group.userId}")
+                if (group.shared) add(stringResource(R.string.group_contains_apps, group.apps.size))
+            }.joinToString(" · ")
         Text(
-            "UID ${app.uid}" + if (app.userId != 0) " · USER ${app.userId}" else "",
+            meta,
             style = MochiTheme.textStyles.footnote.copy(textAlign = TextAlign.Center),
             color = MochiTheme.colorScheme.onSurfaceVariant,
         )

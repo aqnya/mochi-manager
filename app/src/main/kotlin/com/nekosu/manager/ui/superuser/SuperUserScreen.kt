@@ -31,11 +31,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.nekosu.manager.R
+import com.nekosu.manager.data.AppGroup
 import com.nekosu.manager.data.AppListAccess
 import com.nekosu.manager.data.InstalledApp
 import com.nekosu.manager.data.InstalledAppsRepository
 import com.nekosu.manager.data.SuProfile
 import com.nekosu.manager.data.SuProfileStore
+import com.nekosu.manager.data.groupApps
 import com.nekosu.manager.ui.mochi.AppIcon
 import com.nekosu.manager.ui.mochi.KsuTileColors
 import kotlinx.collections.immutable.toImmutableList
@@ -69,15 +71,19 @@ private enum class SortType(
 }
 
 /**
- * 超级用户：列出设备上真实安装的应用，按配置分成
+ * 超级用户：列出设备上真实安装的应用，按 uid 归并后分成
  * 「已授权 / 自定义配置 / 其他应用」三段（对齐 PR 的分组语义）。
+ *
+ * 归并的原因是授权粒度：KernelSU 的 profile 与 su 白名单都按 uid 存，
+ * 共享 uid 的多个包（`android.uid.system`、厂商套件等）只能作为一行出现，
+ * 否则同组会出现多行互相矛盾的开关。组内代表应用由 [pickPrimary] 选出。
  *
  * 点击任意一行进入应用配置页，那里决定是否放行、以什么 uid/gid 运行、
  * 附加组、Capabilities、命名空间、SELinux 域和是否卸载模块。
  */
 @Composable
 fun SuperUserScreen(
-    onOpenApp: (InstalledApp) -> Unit,
+    onOpenApp: (AppGroup) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -131,24 +137,48 @@ fun SuperUserScreen(
     val systemLabel = stringResource(R.string.show_system_apps)
     val refreshLabel = stringResource(R.string.su_refresh)
 
-    val filtered =
-        remember(apps, query, sortType, reversed, showSystem) {
+    // 先按单个应用过滤（系统应用、搜索词），再按 uid 归并：这样搜索「微信」时，
+    // 与它共享 uid 的其他包也会一并出现在同一行里，符合“授权对整组生效”的事实。
+    val filtered: List<AppGroup> =
+        remember(apps, query, sortType, reversed, showSystem, profiles) {
+            val collator = java.text.Collator.getInstance(java.util.Locale.CHINA)
+            val matched: (InstalledApp) -> Boolean = {
+                it.label.contains(query, ignoreCase = true) ||
+                    it.packageName.contains(query, ignoreCase = true)
+            }
             val base =
                 apps.orEmpty()
                     .filter { showSystem || !it.isSystem }
-                    .filter {
-                        !searching ||
-                            it.label.contains(query, ignoreCase = true) ||
-                            it.packageName.contains(query, ignoreCase = true)
-                    }
-            val collator = java.text.Collator.getInstance(java.util.Locale.CHINA)
+                    .filter { !searching || matched(it) }
+            val rank: (InstalledApp) -> Int = { app ->
+                val p = profiles[app.uid]
+                when {
+                    p?.allowSu == true -> 0
+                    p?.isCustom == true -> 1
+                    else -> 2
+                }
+            }
+            val grouped = groupApps(base, rank)
             val sorted =
                 when (sortType) {
-                    SortType.NAME -> base.sortedWith { a, b -> collator.compare(a.label, b.label) }
-                    SortType.PACKAGE_NAME -> base.sortedBy { it.packageName }
-                    SortType.INSTALL_TIME -> base.sortedByDescending { it.installTime }
+                    SortType.NAME -> grouped.sortedWith { a, b -> collator.compare(a.title, b.title) }
+                    SortType.PACKAGE_NAME -> grouped.sortedBy { it.primary.packageName }
+                    SortType.INSTALL_TIME -> grouped.sortedByDescending { it.primary.installTime }
                 }
-            if (reversed) sorted.reversed() else sorted
+            val oriented = if (reversed) sorted.reversed() else sorted
+            if (searching) {
+                oriented.map { group ->
+                    group.copy(
+                        matchedPackages =
+                            group.apps
+                                .filter(matched)
+                                .map { it.packageName }
+                                .toSet(),
+                    )
+                }
+            } else {
+                oriented
+            }
         }
 
     MochiLazyLargeTitleScaffold(
@@ -213,12 +243,14 @@ fun SuperUserScreen(
                 )
             }
         } else {
-            val rooted = filtered.filter { profiles[it.packageName]?.allowSu == true }
+            val rooted = filtered.filter { profiles[it.uid]?.allowSu == true }
             val custom =
-                filtered.filter { app ->
-                    profiles[app.packageName]?.let { !it.allowSu && it.isCustom } == true
+                filtered.filter { group ->
+                    profiles[group.uid]?.let { !it.allowSu && it.isCustom } == true
                 }
-            val others = filtered.filter { it !in rooted && it !in custom }
+            val rootedUids = rooted.mapTo(HashSet()) { it.uid }
+            val customUids = custom.mapTo(HashSet()) { it.uid }
+            val others = filtered.filter { it.uid !in rootedUids && it.uid !in customUids }
             when {
                 filtered.isEmpty() -> item(key = "empty") {
                     MochiEmptyState(
@@ -228,30 +260,30 @@ fun SuperUserScreen(
                 }
 
                 searching -> mochiListSection(key = "results") {
-                    rows(filtered, key = { it.packageName }) { app ->
-                        AppRow(app, profiles[app.packageName], onClick = { onOpenApp(app) })
+                    rows(filtered, key = { it.uid }) { group ->
+                        AppRow(group, profiles[group.uid], onClick = { onOpenApp(group) })
                     }
                 }
 
                 else -> {
                     if (rooted.isNotEmpty()) {
                         mochiListSection(key = "rooted", header = rootHeader) {
-                            rows(rooted, key = { it.packageName }) { app ->
-                                AppRow(app, profiles[app.packageName], showRoot = false, onClick = { onOpenApp(app) })
+                            rows(rooted, key = { it.uid }) { group ->
+                                AppRow(group, profiles[group.uid], showRoot = false, onClick = { onOpenApp(group) })
                             }
                         }
                     }
                     if (custom.isNotEmpty()) {
                         mochiListSection(key = "custom", header = customHeader) {
-                            rows(custom, key = { it.packageName }) { app ->
-                                AppRow(app, profiles[app.packageName], showCustom = false, onClick = { onOpenApp(app) })
+                            rows(custom, key = { it.uid }) { group ->
+                                AppRow(group, profiles[group.uid], showCustom = false, onClick = { onOpenApp(group) })
                             }
                         }
                     }
                     if (others.isNotEmpty()) {
                         mochiListSection(key = "others", header = othersHeader) {
-                            rows(others, key = { it.packageName }) { app ->
-                                AppRow(app, profiles[app.packageName], showUmount = false, onClick = { onOpenApp(app) })
+                            rows(others, key = { it.uid }) { group ->
+                                AppRow(group, profiles[group.uid], showUmount = false, onClick = { onOpenApp(group) })
                             }
                         }
                     }
@@ -264,7 +296,7 @@ fun SuperUserScreen(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AppRow(
-    app: InstalledApp,
+    group: AppGroup,
     profile: SuProfile?,
     showRoot: Boolean = true,
     showCustom: Boolean = true,
@@ -272,14 +304,23 @@ private fun AppRow(
     onClick: () -> Unit,
 ) {
     val cs = MochiTheme.colorScheme
+    val app = group.primary
     val root = showRoot && profile?.allowSu == true
     val umount = showUmount && profile?.umountModules == true
     val customTag = showCustom && profile?.isCustom == true
-    val hasTags = root || umount || customTag || app.userId != 0
+    val hasTags = root || umount || customTag || group.userId != 0
     val accent = if (profile?.allowSu == true) KsuTileColors.Green else KsuTileColors.Blue
+    val sharedSummary = stringResource(R.string.group_contains_apps, group.apps.size)
+    val subtitle =
+        when {
+            // 搜索命中：直接把命中的包名列出来，共享 uid 时尤其有用
+            group.matchedPackages.isNotEmpty() -> group.matchedPackages.joinToString(", ")
+            group.shared -> "$sharedSummary · UID ${group.uid}"
+            else -> app.packageName
+        }
     MochiListRow(
-        app.label,
-        subtitle = app.packageName,
+        group.title,
+        subtitle = subtitle,
         leading = { AppIcon(app.packageName, app.label, accent, AppIconSize) },
         leadingSize = AppIconSize,
         trailing = if (hasTags) {
@@ -296,8 +337,8 @@ private fun AppRow(
                     if (customTag) {
                         MochiListStatusChip("CUSTOM", containerColor = cs.tertiaryContainer, contentColor = cs.onTertiaryContainer)
                     }
-                    if (app.userId != 0) {
-                        MochiListStatusChip("USER ${app.userId}", containerColor = cs.surfaceVariant, contentColor = cs.onSurfaceVariant)
+                    if (group.userId != 0) {
+                        MochiListStatusChip("USER ${group.userId}", containerColor = cs.surfaceVariant, contentColor = cs.onSurfaceVariant)
                     }
                 }
             }

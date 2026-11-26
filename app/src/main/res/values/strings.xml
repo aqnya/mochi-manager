@@ -62,6 +62,10 @@
     <string name="profile_umount_modules">卸载模块</string>
     <string name="profile_umount_modules_summary">对该应用隐藏已挂载的模块</string>
     <string name="profile_reset">恢复默认配置</string>
+    <string name="profile_section_shared">共享 UID 应用</string>
+    <string name="profile_shared_hint">这些应用与当前应用共用 UID %1$d。KernelSU 的授权按 UID 存储，所以这里的授权与运行身份配置对整组应用生效。</string>
+    <string name="group_contains_apps">包含 %1$d 个应用</string>
+    <string name="group_shared_uid">共享 UID %1$d</string>
     <string name="profile_footer">配置仅保存在本机。工程尚未接入 root，这些设置不会真正影响 su 行为。</string>
 
     <string name="mochi_more">更多</string>

@@ -8,7 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import com.nekosu.manager.data.InstalledApp
+import com.nekosu.manager.data.AppGroup
 import com.nekosu.manager.ui.profile.AppProfileScreen
 import ui.feice.mochi.navigation.MochiNavHost
 import ui.feice.mochi.navigation.rememberMochiNavigator
@@ -26,23 +26,23 @@ private const val RouteProfile = "su/profile"
 @Composable
 fun SuperUserFlow(modifier: Modifier = Modifier) {
     val navigator = rememberMochiNavigator(root = RouteList)
-    var opened by remember { mutableStateOf<InstalledApp?>(null) }
+    var opened by remember { mutableStateOf<AppGroup?>(null) }
 
     MochiNavHost(navigator = navigator, modifier = modifier.fillMaxSize()) { route ->
         when (route) {
             RouteProfile -> {
-                val app = opened
-                if (app == null) {
+                val group = opened
+                if (group == null) {
                     // 进程被回收后重建时栈里还有 profile 但对象没了：退回列表，避免白屏
                     LaunchedEffect(Unit) { navigator.popTo(0) }
                 } else {
-                    AppProfileScreen(app = app, onBack = { navigator.pop() })
+                    AppProfileScreen(group = group, onBack = { navigator.pop() })
                 }
             }
 
             else -> SuperUserScreen(
-                onOpenApp = { app ->
-                    opened = app
+                onOpenApp = { group ->
+                    opened = group
                     navigator.push(RouteProfile)
                 },
             )

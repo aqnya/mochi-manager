@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nekosu.manager.data.InstalledApp
+import com.nekosu.manager.data.groupApps
 import com.nekosu.manager.data.SuProfile
 import com.nekosu.manager.data.SuProfileStore
 import com.nekosu.manager.ui.home.HomeScreen
@@ -42,21 +43,32 @@ class ScreenRenderTest {
     val compose = createAndroidComposeRule<ComponentActivity>()
 
     private val context: Context = ApplicationProvider.getApplicationContext()
+
+    private data class Quad(
+        val label: String,
+        val pkg: String,
+        val uid: Int,
+        val sharedUserId: String? = null,
+    )
     private val outDir = File("build/screens").apply { mkdirs() }
 
     @Before
     fun seedPackages() {
         val pm = context.packageManager
+        // 后两个包共享 uid（模拟小米服务套件），列表里应合成一行
         listOf(
-            Triple("微信", "com.tencent.mm", 10_123),
-            Triple("支付宝", "com.eg.android.AlipayGphone", 10_234),
-            Triple("Termux", "com.termux", 10_345),
-            Triple("Chrome", "com.android.chrome", 10_456),
-            Triple("文件管理", "com.google.android.documentsui", 10_567),
-        ).forEachIndexed { index, (label, pkg, uid) ->
+            Quad("微信", "com.tencent.mm", 10_123),
+            Quad("支付宝", "com.eg.android.AlipayGphone", 10_234),
+            Quad("Termux", "com.termux", 10_345),
+            Quad("Chrome", "com.android.chrome", 10_456),
+            Quad("文件管理", "com.google.android.documentsui", 10_567),
+            Quad("小米服务框架", "com.xiaomi.xmsf", 10_600, "com.xiaomi.shared"),
+            Quad("小米云服务", "com.miui.cloudservice", 10_600, "com.xiaomi.shared"),
+        ).forEachIndexed { index, (label, pkg, uid, sharedUserId) ->
             val info =
                 PackageInfo().apply {
                     packageName = pkg
+                    this.sharedUserId = sharedUserId
                     firstInstallTime = 1_700_000_000_000L + index
                     applicationInfo =
                         ApplicationInfo().apply {
@@ -70,9 +82,14 @@ class ScreenRenderTest {
         }
         SuProfileStore.init(context)
         // 一个已授权、一个自定义配置（改了 uid），用于验证 ROOT / CUSTOM 标签与分组
-        SuProfileStore.save(context, SuProfile("com.tencent.mm", allowSu = true))
-        SuProfileStore.save(context, SuProfile("com.termux", allowSu = true, uid = 2000, gid = 2000))
+        SuProfileStore.save(context, SuProfile("com.tencent.mm", 10_123, allowSu = true))
+        SuProfileStore.save(
+            context,
+            SuProfile("com.termux", 10_345, allowSu = true, runAsUid = 2000, runAsGid = 2000),
+        )
     }
+
+    private fun groupOf(vararg apps: InstalledApp) = groupApps(apps.toList()).single()
 
     private fun render(
         name: String,
@@ -104,7 +121,12 @@ class ScreenRenderTest {
     @Test
     fun profile() = render("profile") {
         AppProfileScreen(
-            app = InstalledApp("com.termux", "Termux", 10_345, 0, false, true, 0L, true),
+            // 用共享 uid 的一组应用做截图：验证组员列表、共享说明与按 uid 的配置
+            group =
+                groupOf(
+                    InstalledApp("com.xiaomi.xmsf", "小米服务框架", 10_600, 0, false, true, 0L, true, "com.xiaomi.shared", "小米服务"),
+                    InstalledApp("com.miui.cloudservice", "小米云服务", 10_600, 0, false, true, 1L, true, "com.xiaomi.shared", "小米服务"),
+                ),
             onBack = {},
         )
     }
