@@ -46,7 +46,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v6
         with:
-          name: mochi-manager-${{ inputs.build_type }}
-          path: app/build/outputs/apk/${{ inputs.build_type }}/*.apk
+          name: mochi-manager.zip
+          path: app/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 14
