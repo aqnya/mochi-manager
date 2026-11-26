@@ -25,9 +25,10 @@ import com.example.myapp.ui.theme.MyAppTheme
 fun MainScreen(
     onItemClick: (String) -> Unit,
     modifier: Modifier = Modifier,
-    viewModel: MainScreenViewModel = viewModel {
-        MainScreenViewModel(DefaultDataRepository())
-    },
+    viewModel: MainScreenViewModel =
+        viewModel {
+            MainScreenViewModel(DefaultDataRepository())
+        },
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -35,7 +36,7 @@ fun MainScreen(
         MainScreenUiState.Loading -> {
             Box(
                 modifier = modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
+                contentAlignment = Alignment.Center,
             ) {
                 CircularProgressIndicator()
             }
@@ -45,14 +46,14 @@ fun MainScreen(
             MainContent(
                 data = state.data,
                 onItemClick = onItemClick,
-                modifier = modifier
+                modifier = modifier,
             )
         }
 
         is MainScreenUiState.Error -> {
             Box(
                 modifier = modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
+                contentAlignment = Alignment.Center,
             ) {
                 Text("Error loading data: ${state.throwable.message}")
             }
@@ -68,14 +69,15 @@ internal fun MainContent(
 ) {
     Column(
         modifier = modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         data.forEach { item ->
             Greeting(
                 name = item,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onItemClick(item) }
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { onItemClick(item) },
             )
         }
     }
@@ -84,12 +86,12 @@ internal fun MainContent(
 @Composable
 fun Greeting(
     name: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Text(
         text = "Hello $name !",
         modifier = modifier.padding(16.dp),
-        style = MaterialTheme.typography.bodyLarge
+        style = MaterialTheme.typography.bodyLarge,
     )
 }
 
@@ -99,7 +101,7 @@ fun MainContentPreview() {
     MyAppTheme {
         MainContent(
             data = listOf("Android"),
-            onItemClick = {}
+            onItemClick = {},
         )
     }
 }

@@ -2,8 +2,8 @@ package com.example.myapp
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -23,12 +23,13 @@ import androidx.navigation3.ui.NavDisplay
 import com.example.myapp.R
 import com.example.myapp.ui.main.MainScreen
 
-private val topLevelTabs: List<AppRoute> = listOf(
-    AppRoute.Home,
-    AppRoute.Apps,
-    AppRoute.Rules,
-    AppRoute.Settings,
-)
+private val topLevelTabs: List<AppRoute> =
+    listOf(
+        AppRoute.Home,
+        AppRoute.Apps,
+        AppRoute.Rules,
+        AppRoute.Settings,
+    )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,10 +47,11 @@ fun MainNavigation(modifier: Modifier = Modifier) {
             if (showBottomBar) {
                 CenterAlignedTopAppBar(
                     title = { Text(stringResource(R.string.app_name)) },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        titleContentColor = MaterialTheme.colorScheme.primary
-                    )
+                    colors =
+                        TopAppBarDefaults.topAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            titleContentColor = MaterialTheme.colorScheme.primary,
+                        ),
                 )
             }
         },
@@ -72,45 +74,48 @@ fun MainNavigation(modifier: Modifier = Modifier) {
                             }
                         }
                     },
-                    modifier = Modifier
-        .navigationBarsPadding(),
+                    modifier =
+                        Modifier
+                            .navigationBarsPadding(),
                 )
             }
-        }
+        },
     ) { innerPadding ->
         NavDisplay(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
             backStack = backStack,
             onBack = {
                 if (backStack.size > 1) {
                     backStack.removeLastOrNull()
                 }
             },
-            entryProvider = entryProvider {
-                entry<AppRoute.Home> {
-                    MainScreen(
-                        onItemClick = { itemId ->
-                            backStack.add(AppRoute.Detail(itemId = itemId))
+            entryProvider =
+                entryProvider {
+                    entry<AppRoute.Home> {
+                        MainScreen(
+                            onItemClick = { itemId ->
+                                backStack.add(AppRoute.Detail(itemId = itemId))
+                            },
+                        )
+                    }
+                    entry<AppRoute.Apps> {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            Text("应用")
                         }
-                    )
-                }
-                entry<AppRoute.Apps> {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        Text("应用")
                     }
-                }
-                entry<AppRoute.Rules> {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        Text("规则")
+                    entry<AppRoute.Rules> {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            Text("规则")
+                        }
                     }
-                }
-                entry<AppRoute.Settings> {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        Text("设置")
+                    entry<AppRoute.Settings> {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            Text("设置")
+                        }
                     }
-                }
        /*         entry<AppRoute.Detail> { key ->
                     // 详情页自行处理自身 TopBar 和返回回调
                   DetailScreen(
@@ -122,7 +127,7 @@ fun MainNavigation(modifier: Modifier = Modifier) {
                         }
                     )
                 }*/
-            }
+                },
         )
     }
 }
