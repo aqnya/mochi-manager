@@ -63,8 +63,24 @@ fun MainScreen(
     }
 }
 
+/** 直接展示一组数据的重载，便于预览和测试。 */
 @Composable
-internal fun MainContent(
+fun MainScreen(
+    data: List<String>,
+    onItemClick: (String) -> Unit = {},
+    modifier: Modifier = Modifier,
+    bottomBarClearance: Dp = 88.dp,
+) {
+    MainContent(
+        data = data,
+        onItemClick = onItemClick,
+        modifier = modifier,
+        bottomBarClearance = bottomBarClearance,
+    )
+}
+
+@Composable
+fun MainContent(
     data: List<String>,
     onItemClick: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -115,7 +131,7 @@ private fun GreetingCard(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                text = "Hello $name !",
+                text = "Hello $name!",
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
