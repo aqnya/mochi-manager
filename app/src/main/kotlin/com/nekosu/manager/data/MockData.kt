@@ -1,20 +1,5 @@
 package com.nekosu.manager.data
 
-import androidx.compose.ui.graphics.Color
-
-/** 超级用户列表里的一行应用（模拟数据，真实场景来自 PackageManager + root 授权记录）。 */
-data class SuApp(
-    val uid: Int,
-    val label: String,
-    val packageName: String,
-    val allowSu: Boolean = false,
-    val custom: Boolean = false,
-    val umount: Boolean = false,
-    val userId: Int = 0,
-    val memberCount: Int = 1,
-    val accent: Color,
-)
-
 /** 模块卡片的数据。 */
 data class ModuleEntry(
     val id: String,
@@ -53,60 +38,6 @@ object MockData {
             seccomp = "Filter",
             kernel = "6.1.75-android14-11-g3a9c1d2e-ab12345678",
             fingerprint = "google/husky/husky:15/AP4A.250105.002/12345678:user/release-keys",
-        )
-
-    val superUserApps =
-        listOf(
-            SuApp(
-                uid = 10123,
-                label = "微信",
-                packageName = "com.tencent.mm",
-                allowSu = true,
-                accent = Color(0xFF07C160),
-            ),
-            SuApp(
-                uid = 10234,
-                label = "Termux",
-                packageName = "com.termux",
-                allowSu = true,
-                accent = Color(0xFF3B4252),
-            ),
-            SuApp(
-                uid = 10345,
-                label = "支付宝",
-                packageName = "com.eg.android.AlipayGphone",
-                allowSu = true,
-                custom = true,
-                accent = Color(0xFF1677FF),
-            ),
-            SuApp(
-                uid = 10456,
-                label = "抖音",
-                packageName = "com.ss.android.ugc.aweme",
-                custom = true,
-                accent = Color(0xFF161823),
-            ),
-            SuApp(
-                uid = 10567,
-                label = "网易云音乐",
-                packageName = "com.netease.cloudmusic",
-                umount = true,
-                accent = Color(0xFFE60026),
-            ),
-            SuApp(
-                uid = 10678,
-                label = "Chrome",
-                packageName = "com.android.chrome",
-                umount = true,
-                accent = Color(0xFF4285F4),
-            ),
-            SuApp(
-                uid = 10789,
-                label = "文件管理",
-                packageName = "com.google.android.documentsui",
-                userId = 10,
-                accent = Color(0xFF34A853),
-            ),
         )
 
     val modules =

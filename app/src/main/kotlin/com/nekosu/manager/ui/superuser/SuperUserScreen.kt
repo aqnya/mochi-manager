@@ -1,23 +1,35 @@
 package com.nekosu.manager.ui.superuser
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.nekosu.manager.R
-import com.nekosu.manager.data.MockData
-import com.nekosu.manager.data.SuApp
-import com.nekosu.manager.ui.mochi.AppIconBadge
+import com.nekosu.manager.data.InstalledApp
+import com.nekosu.manager.data.InstalledAppsRepository
+import com.nekosu.manager.data.SuProfile
+import com.nekosu.manager.data.SuProfileStore
+import com.nekosu.manager.ui.mochi.AppIcon
+import com.nekosu.manager.ui.mochi.KsuTileColors
+import com.nekosu.manager.ui.profile.AppProfileScreen
 import kotlinx.collections.immutable.toImmutableList
 import ui.feice.mochi.basic.MochiBarGroup
 import ui.feice.mochi.basic.MochiBarGroupDropdownItem
@@ -44,41 +56,62 @@ private enum class SortType(
 }
 
 /**
- * 超级用户：已授权 / 自定义配置 / 其他应用三段分组，支持搜索、排序和「显示系统应用」等筛选。
- * 这里的数据是 [MockData.superUserApps]，交互（搜索、排序）是真实的。
+ * 超级用户：列出设备上真实安装的应用，按配置分成
+ * 「已授权 / 自定义配置 / 其他应用」三段（对齐 PR 的分组语义）。
+ *
+ * 点击任意一行进入应用配置页，那里决定是否放行、以什么 uid/gid 运行、
+ * 附加组、Capabilities、命名空间、SELinux 域和是否卸载模块。
  */
 @Composable
 fun SuperUserScreen(modifier: Modifier = Modifier) {
+    var opened by remember { mutableStateOf<InstalledApp?>(null) }
+    val current = opened
+    if (current != null) {
+        AppProfileScreen(app = current, onBack = { opened = null }, modifier = modifier)
+        return
+    }
+
+    val context = LocalContext.current
+    var apps by remember { mutableStateOf<List<InstalledApp>?>(null) }
+    var reloadKey by rememberSaveable { mutableIntStateOf(0) }
     var query by rememberSaveable { mutableStateOf("") }
     var sortType by rememberSaveable { mutableStateOf(SortType.NAME) }
     var reversed by rememberSaveable { mutableStateOf(false) }
     var showSystem by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+
+    LaunchedEffect(reloadKey) {
+        apps = null
+        apps = InstalledAppsRepository.load(context)
+    }
+    LaunchedEffect(Unit) { SuProfileStore.init(context) }
+    val profiles by SuProfileStore.profiles.collectAsState()
+
     val rootHeader = stringResource(R.string.mochi_su_section_root)
     val customHeader = stringResource(R.string.mochi_su_section_custom)
     val othersHeader = stringResource(R.string.mochi_su_section_others)
-
     val searching = query.isNotBlank()
     val sortLabels = SortType.entries.map { stringResource(it.labelRes) }
     val reverseLabel = stringResource(R.string.sort_reverse)
     val systemLabel = stringResource(R.string.show_system_apps)
-    val more = stringResource(R.string.mochi_more)
+    val refreshLabel = stringResource(R.string.su_refresh)
 
-    val apps =
-        remember(query, sortType, reversed, showSystem) {
+    val filtered =
+        remember(apps, query, sortType, reversed, showSystem) {
             val base =
-                MockData.superUserApps
-                    .filter { showSystem || !it.packageName.startsWith("com.android.") }
+                apps.orEmpty()
+                    .filter { showSystem || !it.isSystem }
                     .filter {
                         !searching ||
                             it.label.contains(query, ignoreCase = true) ||
                             it.packageName.contains(query, ignoreCase = true)
                     }
+            val collator = java.text.Collator.getInstance(java.util.Locale.CHINA)
             val sorted =
                 when (sortType) {
-                    SortType.NAME -> base.sortedBy { it.label }
+                    SortType.NAME -> base.sortedWith { a, b -> collator.compare(a.label, b.label) }
                     SortType.PACKAGE_NAME -> base.sortedBy { it.packageName }
-                    SortType.INSTALL_TIME -> base.sortedByDescending { it.uid }
+                    SortType.INSTALL_TIME -> base.sortedByDescending { it.installTime }
                 }
             if (reversed) sorted.reversed() else sorted
         }
@@ -88,8 +121,8 @@ fun SuperUserScreen(modifier: Modifier = Modifier) {
         modifier = modifier,
         actions = {
             MochiBarGroup(navId = "su.actions") {
-                MochiBarGroupItem(onClick = {}, navId = "su.log", contentKey = "reader") {
-                    MochiIonicon("reader")
+                MochiBarGroupItem(onClick = { reloadKey++ }, navId = "su.reload", contentKey = "refresh") {
+                    MochiIonicon("refresh")
                 }
                 val items =
                     buildList {
@@ -98,6 +131,7 @@ fun SuperUserScreen(modifier: Modifier = Modifier) {
                         }
                         add(MochiItem(reverseLabel, icon = checkIcon(reversed)))
                         add(MochiItem(systemLabel, icon = checkIcon(showSystem)))
+                        add(MochiItem(refreshLabel, icon = { tint -> MochiIonicon("refresh", tint = tint) }))
                     }.toImmutableList()
                 MochiBarGroupDropdownItem(
                     expanded = menu,
@@ -107,7 +141,8 @@ fun SuperUserScreen(modifier: Modifier = Modifier) {
                         when {
                             index < SortType.entries.size -> sortType = SortType.entries[index]
                             index == SortType.entries.size -> reversed = !reversed
-                            else -> showSystem = !showSystem
+                            index == SortType.entries.size + 1 -> showSystem = !showSystem
+                            else -> reloadKey++
                         }
                     },
                     navId = "su.more",
@@ -124,35 +159,54 @@ fun SuperUserScreen(modifier: Modifier = Modifier) {
             )
         },
     ) {
-        val rooted = apps.filter { it.allowSu }
-        val custom = apps.filter { !it.allowSu && it.custom }
-        val others = apps.filter { !it.allowSu && !it.custom }
-        when {
-            apps.isEmpty() -> item(key = "empty") {
-                MochiEmptyState(
-                    stringResource(R.string.mochi_no_results),
-                    icon = { MochiIonicon("search", size = 44.dp) },
-                )
+        if (apps == null) {
+            item(key = "loading") {
+                Box(Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                }
             }
+        } else {
+            val rooted = filtered.filter { profiles[it.packageName]?.allowSu == true }
+            val custom =
+                filtered.filter { app ->
+                    profiles[app.packageName]?.let { !it.allowSu && it.isCustom } == true
+                }
+            val others = filtered.filter { it !in rooted && it !in custom }
+            when {
+                filtered.isEmpty() -> item(key = "empty") {
+                    MochiEmptyState(
+                        stringResource(R.string.mochi_no_results),
+                        icon = { MochiIonicon("search", size = 44.dp) },
+                    )
+                }
 
-            searching -> mochiListSection(key = "results") {
-                rows(apps, key = { it.uid }) { app -> SuAppRow(app) }
-            }
-
-            else -> {
-                if (rooted.isNotEmpty()) {
-                    mochiListSection(key = "rooted", header = rootHeader) {
-                        rows(rooted, key = { it.uid }) { app -> SuAppRow(app, showRoot = false) }
+                searching -> mochiListSection(key = "results") {
+                    rows(filtered, key = { it.packageName }) { app ->
+                        AppRow(app, profiles[app.packageName], onClick = { opened = app })
                     }
                 }
-                if (custom.isNotEmpty()) {
-                    mochiListSection(key = "custom", header = customHeader) {
-                        rows(custom, key = { it.uid }) { app -> SuAppRow(app, showCustom = false) }
+
+                else -> {
+                    if (rooted.isNotEmpty()) {
+                        mochiListSection(key = "rooted", header = rootHeader) {
+                            rows(rooted, key = { it.packageName }) { app ->
+                                AppRow(app, profiles[app.packageName], showRoot = false, onClick = { opened = app })
+                            }
+                        }
                     }
-                }
-                if (others.isNotEmpty()) {
-                    mochiListSection(key = "others", header = othersHeader) {
-                        rows(others, key = { it.uid }) { app -> SuAppRow(app, showUmount = false) }
+                    if (custom.isNotEmpty()) {
+                        mochiListSection(key = "custom", header = customHeader) {
+                            rows(custom, key = { it.packageName }) { app ->
+                                AppRow(app, profiles[app.packageName], showCustom = false, onClick = { opened = app })
+                            }
+                        }
+                    }
+                    if (others.isNotEmpty()) {
+                        mochiListSection(key = "others", header = othersHeader) {
+                            rows(others, key = { it.packageName }) { app ->
+                                AppRow(app, profiles[app.packageName], showUmount = false, onClick = { opened = app })
+                            }
+                        }
                     }
                 }
             }
@@ -162,21 +216,24 @@ fun SuperUserScreen(modifier: Modifier = Modifier) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SuAppRow(
-    app: SuApp,
+private fun AppRow(
+    app: InstalledApp,
+    profile: SuProfile?,
     showRoot: Boolean = true,
     showCustom: Boolean = true,
     showUmount: Boolean = true,
+    onClick: () -> Unit,
 ) {
     val cs = MochiTheme.colorScheme
-    val root = showRoot && app.allowSu
-    val umount = showUmount && app.umount
-    val customTag = showCustom && app.custom
+    val root = showRoot && profile?.allowSu == true
+    val umount = showUmount && profile?.umountModules == true
+    val customTag = showCustom && profile?.isCustom == true
     val hasTags = root || umount || customTag || app.userId != 0
+    val accent = if (profile?.allowSu == true) KsuTileColors.Green else KsuTileColors.Blue
     MochiListRow(
         app.label,
         subtitle = app.packageName,
-        leading = { AppIconBadge(app.label, app.accent, AppIconSize) },
+        leading = { AppIcon(app.packageName, app.label, accent, AppIconSize) },
         leadingSize = AppIconSize,
         trailing = if (hasTags) {
             {
@@ -201,7 +258,7 @@ private fun SuAppRow(
             null
         },
         chevron = true,
-        onClick = {},
+        onClick = onClick,
     )
 }
 

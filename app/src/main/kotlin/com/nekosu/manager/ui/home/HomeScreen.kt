@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import com.nekosu.manager.R
 import com.nekosu.manager.data.DeviceInfo
 import com.nekosu.manager.data.MockData
+import com.nekosu.manager.data.SuProfileStore
 import com.nekosu.manager.ui.mochi.KsuTileColors
 import com.nekosu.manager.ui.mochi.MochiCredit
 import com.nekosu.manager.ui.mochi.rememberKsuTone
@@ -62,6 +66,9 @@ fun HomeScreen(
     onOpenTab: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) { SuProfileStore.init(context) }
+    val profiles by SuProfileStore.profiles.collectAsState()
     MochiLazyLargeTitleScaffold(
         title = stringResource(R.string.app_name),
         modifier = modifier,
@@ -75,7 +82,7 @@ fun HomeScreen(
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 ActiveCard()
                 Notice(stringResource(R.string.home_new_version), error = false)
-                StatsRow(onOpenTab)
+                StatsRow(onOpenTab, grantedCount = profiles.values.count { it.allowSu })
             }
         }
         item(key = "info") { SystemInfoSection(MockData.device) }
@@ -156,12 +163,15 @@ private fun Notice(
 }
 
 @Composable
-private fun StatsRow(onOpenTab: (Int) -> Unit) {
+private fun StatsRow(
+    onOpenTab: (Int) -> Unit,
+    grantedCount: Int,
+) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         StatTile(
             title = stringResource(R.string.superuser),
             icon = "shield-checkmark",
-            count = MockData.superUserApps.count { it.allowSu },
+            count = grantedCount,
             modifier = Modifier.weight(1f),
         ) { onOpenTab(1) }
         StatTile(

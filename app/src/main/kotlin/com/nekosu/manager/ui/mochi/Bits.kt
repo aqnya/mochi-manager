@@ -1,5 +1,6 @@
 package com.nekosu.manager.ui.mochi
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,17 +10,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.ColorUtils
+import com.nekosu.manager.data.AppIcons
 import ui.feice.mochi.basic.MochiSwitch
 import ui.feice.mochi.basic.Text
 import ui.feice.mochi.icons.MochiIonicon
@@ -132,7 +137,37 @@ fun KsuSwitchRow(
     )
 }
 
-/** 应用图标占位：用首字 + 主题色块代替真实图标，避免依赖 PackageManager。 */
+/**
+ * 真实应用图标：先读缓存，未命中再异步加载；加载中或取不到时回退成首字色块，
+ * 避免列表滚动时因为图标 IPC 而抖动。
+ */
+@Composable
+fun AppIcon(
+    packageName: String,
+    label: String,
+    accent: Color,
+    size: Dp = 36.dp,
+) {
+    val context = LocalContext.current
+    val icon by produceState(AppIcons.cached(packageName), packageName) {
+        if (value == null) value = AppIcons.load(context, packageName)
+    }
+    val bitmap = icon
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap,
+            contentDescription = null,
+            modifier =
+                Modifier
+                    .size(size)
+                    .clip(MochiRoundedRectangle(size * 0.26f)),
+        )
+    } else {
+        AppIconBadge(label, accent, size)
+    }
+}
+
+/** 应用图标占位：用首字 + 主题色块代替真实图标。 */
 @Composable
 fun AppIconBadge(
     label: String,
