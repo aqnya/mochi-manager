@@ -30,6 +30,12 @@
 
     <!-- 超级用户授权 -->
     <string name="su_refresh">刷新列表</string>
+    <string name="su_perm_section">需要授权</string>
+    <string name="su_perm_title">允许读取应用列表</string>
+    <string name="su_perm_summary">澎湃 / MIUI 默认限制第三方应用读取已安装应用列表，关闭时这里只会显示空白。点「去开启」，在权限管理里允许本应用读取应用列表。</string>
+    <string name="su_perm_summary_generic">系统限制了本应用读取已安装应用列表，需要到系统设置里手动允许，然后回到这里重新检查。</string>
+    <string name="su_perm_open">去开启</string>
+    <string name="su_perm_retry">重新检查</string>
     <string name="su_grant">授予 Root</string>
     <string name="su_revoke">撤销授权</string>
     <string name="su_grant_message">确定要授予「%1$s」超级用户权限吗？</string>

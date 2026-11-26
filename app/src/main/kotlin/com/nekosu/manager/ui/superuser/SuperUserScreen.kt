@@ -1,7 +1,11 @@
 package com.nekosu.manager.ui.superuser
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -9,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -22,7 +27,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.nekosu.manager.R
+import com.nekosu.manager.data.AppListAccess
 import com.nekosu.manager.data.InstalledApp
 import com.nekosu.manager.data.InstalledAppsRepository
 import com.nekosu.manager.data.SuProfile
@@ -33,11 +42,16 @@ import kotlinx.collections.immutable.toImmutableList
 import ui.feice.mochi.basic.MochiBarGroup
 import ui.feice.mochi.basic.MochiBarGroupDropdownItem
 import ui.feice.mochi.basic.MochiBarGroupItem
+import ui.feice.mochi.basic.MochiButton
+import ui.feice.mochi.basic.MochiButtonStyle
 import ui.feice.mochi.basic.MochiEmptyState
 import ui.feice.mochi.basic.MochiItem
 import ui.feice.mochi.basic.MochiSearchBar
+import ui.feice.mochi.basic.Text
 import ui.feice.mochi.icons.MochiIonicon
+import ui.feice.mochi.list.MochiListCard
 import ui.feice.mochi.list.MochiListRow
+import ui.feice.mochi.list.MochiListSection
 import ui.feice.mochi.list.MochiListStatusChip
 import ui.feice.mochi.list.mochiListSection
 import ui.feice.mochi.list.rows
@@ -81,6 +95,32 @@ fun SuperUserScreen(
     }
     LaunchedEffect(Unit) { SuProfileStore.init(context) }
     val profiles by SuProfileStore.profiles.collectAsState()
+
+    // 小米「获取应用列表」权限：HyperOS / MIUI 13+ 可以像普通运行时权限一样动态申请，
+    // 首次进入弹一次系统授权框，拒绝后不再打扰，改由下面的引导卡跳设置页。
+    val permissionLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+            reloadKey++
+        }
+    LaunchedEffect(Unit) {
+        if (AppListAccess.shouldAskOnce(context)) {
+            permissionLauncher.launch(AppListAccess.PERMISSION)
+        }
+    }
+
+    // 从系统权限页返回时重新读一次：HyperOS 的「读取应用列表」开关只能在系统设置里改
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        var firstResume = true
+        val observer =
+            LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    if (firstResume) firstResume = false else reloadKey++
+                }
+            }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val rootHeader = stringResource(R.string.mochi_su_section_root)
     val customHeader = stringResource(R.string.mochi_su_section_custom)
@@ -145,13 +185,18 @@ fun SuperUserScreen(
                 ) { MochiIonicon("filter") }
             }
         },
-        searchBar = {
-            MochiSearchBar(
-                query = query,
-                onQueryChange = { query = it },
-                placeholder = stringResource(R.string.mochi_search_apps),
-                onCancel = { query = "" },
-            )
+        // 列表读不到（权限被限制）时搜索没有意义，直接不显示搜索框
+        searchBar = if (apps != null && AppListAccess.looksRestricted(apps.orEmpty())) {
+            null
+        } else {
+            {
+                MochiSearchBar(
+                    query = query,
+                    onQueryChange = { query = it },
+                    placeholder = stringResource(R.string.mochi_search_apps),
+                    onCancel = { query = "" },
+                )
+            }
         },
     ) {
         if (apps == null) {
@@ -159,6 +204,13 @@ fun SuperUserScreen(
                 Box(Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
                 }
+            }
+        } else if (AppListAccess.looksRestricted(apps.orEmpty())) {
+            item(key = "perm") {
+                PermissionNotice(
+                    onOpen = { AppListAccess.openPermissionSettings(context) },
+                    onRetry = { reloadKey++ },
+                )
             }
         } else {
             val rooted = filtered.filter { profiles[it.packageName]?.allowSu == true }
@@ -263,3 +315,52 @@ private fun checkIcon(on: Boolean): (@Composable (androidx.compose.ui.graphics.C
     } else {
         null
     }
+
+/**
+ * 「读取应用列表」被系统限制时的引导卡。
+ *
+ * HyperOS / MIUI 关闭这个权限后 `getInstalledPackages` 只返回自身，列表会全空；
+ * 这里直接给出去设置的入口，另外留一个「重新检查」用于返回后手动重试（部分 ROM 需要重进应用）。
+ */
+@Composable
+private fun PermissionNotice(
+    onOpen: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    val cs = MochiTheme.colorScheme
+    MochiListSection(header = stringResource(R.string.su_perm_section)) {
+        MochiListCard {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    MochiIonicon("shield-half", tint = cs.primary, size = 20.dp)
+                    Text(
+                        stringResource(R.string.su_perm_title),
+                        style = MochiTheme.textStyles.navTitle,
+                        color = cs.onSurface,
+                    )
+                }
+                Text(
+                    stringResource(
+                        if (AppListAccess.isMiuiFamily()) R.string.su_perm_summary else R.string.su_perm_summary_generic,
+                    ),
+                    style = MochiTheme.textStyles.footnote,
+                    color = cs.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MochiButton(onClick = onOpen, style = MochiButtonStyle.Filled) {
+                        Text(stringResource(R.string.su_perm_open))
+                    }
+                    MochiButton(onClick = onRetry, style = MochiButtonStyle.Tonal) {
+                        Text(stringResource(R.string.su_perm_retry))
+                    }
+                }
+            }
+        }
+    }
+}
