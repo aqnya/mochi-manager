@@ -6,7 +6,7 @@ import androidx.compose.ui.unit.dp
 import com.nekosu.manager.ui.home.HomeScreen
 import com.nekosu.manager.ui.module.ModuleScreen
 import com.nekosu.manager.ui.settings.SettingsScreen
-import com.nekosu.manager.ui.superuser.SuperUserScreen
+import com.nekosu.manager.ui.superuser.SuperUserFlow
 import kotlinx.collections.immutable.toImmutableList
 import ui.feice.mochi.basic.MochiTabBarDefaults
 import ui.feice.mochi.basic.MochiTabItem
@@ -50,7 +50,7 @@ fun MochiRoot() {
     ) { index ->
         when (index) {
             0 -> HomeScreen(onOpenTab = { tabState.select(it) })
-            1 -> SuperUserScreen()
+            1 -> SuperUserFlow()
             2 -> ModuleScreen()
             else -> SettingsScreen()
         }

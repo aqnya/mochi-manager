@@ -99,7 +99,7 @@ class ScreenRenderTest {
     fun home() = render("home") { HomeScreen(onOpenTab = {}) }
 
     @Test
-    fun superUser() = render("superuser") { SuperUserScreen() }
+    fun superUser() = render("superuser") { SuperUserScreen(onOpenApp = {}) }
 
     @Test
     fun profile() = render("profile") {

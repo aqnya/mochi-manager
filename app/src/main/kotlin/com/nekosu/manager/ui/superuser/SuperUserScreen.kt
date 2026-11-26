@@ -29,7 +29,6 @@ import com.nekosu.manager.data.SuProfile
 import com.nekosu.manager.data.SuProfileStore
 import com.nekosu.manager.ui.mochi.AppIcon
 import com.nekosu.manager.ui.mochi.KsuTileColors
-import com.nekosu.manager.ui.profile.AppProfileScreen
 import kotlinx.collections.immutable.toImmutableList
 import ui.feice.mochi.basic.MochiBarGroup
 import ui.feice.mochi.basic.MochiBarGroupDropdownItem
@@ -63,14 +62,10 @@ private enum class SortType(
  * 附加组、Capabilities、命名空间、SELinux 域和是否卸载模块。
  */
 @Composable
-fun SuperUserScreen(modifier: Modifier = Modifier) {
-    var opened by remember { mutableStateOf<InstalledApp?>(null) }
-    val current = opened
-    if (current != null) {
-        AppProfileScreen(app = current, onBack = { opened = null }, modifier = modifier)
-        return
-    }
-
+fun SuperUserScreen(
+    onOpenApp: (InstalledApp) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     var apps by remember { mutableStateOf<List<InstalledApp>?>(null) }
     var reloadKey by rememberSaveable { mutableIntStateOf(0) }
@@ -182,7 +177,7 @@ fun SuperUserScreen(modifier: Modifier = Modifier) {
 
                 searching -> mochiListSection(key = "results") {
                     rows(filtered, key = { it.packageName }) { app ->
-                        AppRow(app, profiles[app.packageName], onClick = { opened = app })
+                        AppRow(app, profiles[app.packageName], onClick = { onOpenApp(app) })
                     }
                 }
 
@@ -190,21 +185,21 @@ fun SuperUserScreen(modifier: Modifier = Modifier) {
                     if (rooted.isNotEmpty()) {
                         mochiListSection(key = "rooted", header = rootHeader) {
                             rows(rooted, key = { it.packageName }) { app ->
-                                AppRow(app, profiles[app.packageName], showRoot = false, onClick = { opened = app })
+                                AppRow(app, profiles[app.packageName], showRoot = false, onClick = { onOpenApp(app) })
                             }
                         }
                     }
                     if (custom.isNotEmpty()) {
                         mochiListSection(key = "custom", header = customHeader) {
                             rows(custom, key = { it.packageName }) { app ->
-                                AppRow(app, profiles[app.packageName], showCustom = false, onClick = { opened = app })
+                                AppRow(app, profiles[app.packageName], showCustom = false, onClick = { onOpenApp(app) })
                             }
                         }
                     }
                     if (others.isNotEmpty()) {
                         mochiListSection(key = "others", header = othersHeader) {
                             rows(others, key = { it.packageName }) { app ->
-                                AppRow(app, profiles[app.packageName], showUmount = false, onClick = { opened = app })
+                                AppRow(app, profiles[app.packageName], showUmount = false, onClick = { onOpenApp(app) })
                             }
                         }
                     }
