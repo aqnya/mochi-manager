@@ -3,6 +3,12 @@ package com.example.myapp
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -17,8 +23,6 @@ import ui.feice.mochi.basic.MochiTabBarScrollBehavior
 import ui.feice.mochi.basic.MochiTabItem
 import ui.feice.mochi.basic.rememberMochiTabBarScrollBehavior
 import ui.feice.mochi.navigation.MochiTabScaffold
-import ui.feice.mochi.theme.MochiTheme
-import ui.feice.mochi.basic.Text as MochiText
 
 @Serializable
 sealed interface AppRoute : NavKey {
@@ -64,23 +68,23 @@ fun MainBottomNavBar(
             listOf(
                 MochiTabItem(
                     "首页",
-                    selectedIcon = { MochiText("⌂", style = MochiTheme.textStyles.titleLarge) },
-                    icon = { MochiText("⌂", style = MochiTheme.textStyles.titleLarge) },
+                    selectedIcon = { Icon(Icons.Default.Home, contentDescription = "首页") },
+                    icon = { Icon(Icons.Default.Home, contentDescription = "首页") },
                 ),
                 MochiTabItem(
                     "应用",
-                    selectedIcon = { MochiText("▦", style = MochiTheme.textStyles.titleLarge) },
-                    icon = { MochiText("▦", style = MochiTheme.textStyles.titleLarge) },
+                    selectedIcon = { Icon(Icons.Default.Apps, contentDescription = "应用") },
+                    icon = { Icon(Icons.Default.Apps, contentDescription = "应用") },
                 ),
                 MochiTabItem(
                     "规则",
-                    selectedIcon = { MochiText("⚙", style = MochiTheme.textStyles.titleLarge) },
-                    icon = { MochiText("⚙", style = MochiTheme.textStyles.titleLarge) },
+                    selectedIcon = { Icon(Icons.Default.Settings, contentDescription = "规则") },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = "规则") },
                 ),
                 MochiTabItem(
                     "设置",
-                    selectedIcon = { MochiText("☰", style = MochiTheme.textStyles.titleLarge) },
-                    icon = { MochiText("☰", style = MochiTheme.textStyles.titleLarge) },
+                    selectedIcon = { Icon(Icons.Default.Menu, contentDescription = "设置") },
+                    icon = { Icon(Icons.Default.Menu, contentDescription = "设置") },
                 ),
             ).toImmutableList()
         }
