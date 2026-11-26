@@ -1,0 +1,159 @@
+package com.nekosu.manager.data
+
+import androidx.compose.ui.graphics.Color
+
+/** 超级用户列表里的一行应用（模拟数据，真实场景来自 PackageManager + root 授权记录）。 */
+data class SuApp(
+    val uid: Int,
+    val label: String,
+    val packageName: String,
+    val allowSu: Boolean = false,
+    val custom: Boolean = false,
+    val umount: Boolean = false,
+    val userId: Int = 0,
+    val memberCount: Int = 1,
+    val accent: Color,
+)
+
+/** 模块卡片的数据。 */
+data class ModuleEntry(
+    val id: String,
+    val name: String,
+    val version: String,
+    val author: String,
+    val description: String,
+    val enabled: Boolean = true,
+    val remove: Boolean = false,
+    val metaModule: Boolean = false,
+    val hasAction: Boolean = false,
+    val hasWebUi: Boolean = false,
+    val hasUpdate: Boolean = false,
+)
+
+/** 首页系统信息。 */
+data class DeviceInfo(
+    val model: String,
+    val managerVersion: String,
+    val selinux: String,
+    val seccomp: String,
+    val kernel: String,
+    val fingerprint: String,
+)
+
+object MockData {
+    const val ksuVersion = "v1.1.0-12851"
+    const val kernelUapiVersion = "1.0"
+    const val lkmMode = "GKI"
+
+    val device =
+        DeviceInfo(
+            model = "Pixel 8 Pro",
+            managerVersion = "NekoSU 1.0 (1)",
+            selinux = "Enforcing",
+            seccomp = "Filter",
+            kernel = "6.1.75-android14-11-g3a9c1d2e-ab12345678",
+            fingerprint = "google/husky/husky:15/AP4A.250105.002/12345678:user/release-keys",
+        )
+
+    val superUserApps =
+        listOf(
+            SuApp(
+                uid = 10123,
+                label = "微信",
+                packageName = "com.tencent.mm",
+                allowSu = true,
+                accent = Color(0xFF07C160),
+            ),
+            SuApp(
+                uid = 10234,
+                label = "Termux",
+                packageName = "com.termux",
+                allowSu = true,
+                accent = Color(0xFF3B4252),
+            ),
+            SuApp(
+                uid = 10345,
+                label = "支付宝",
+                packageName = "com.eg.android.AlipayGphone",
+                allowSu = true,
+                custom = true,
+                accent = Color(0xFF1677FF),
+            ),
+            SuApp(
+                uid = 10456,
+                label = "抖音",
+                packageName = "com.ss.android.ugc.aweme",
+                custom = true,
+                accent = Color(0xFF161823),
+            ),
+            SuApp(
+                uid = 10567,
+                label = "网易云音乐",
+                packageName = "com.netease.cloudmusic",
+                umount = true,
+                accent = Color(0xFFE60026),
+            ),
+            SuApp(
+                uid = 10678,
+                label = "Chrome",
+                packageName = "com.android.chrome",
+                umount = true,
+                accent = Color(0xFF4285F4),
+            ),
+            SuApp(
+                uid = 10789,
+                label = "文件管理",
+                packageName = "com.google.android.documentsui",
+                userId = 10,
+                accent = Color(0xFF34A853),
+            ),
+        )
+
+    val modules =
+        listOf(
+            ModuleEntry(
+                id = "zygisk_lsposed",
+                name = "LSPosed",
+                version = "v1.9.3",
+                author = "LSPosed Developers",
+                description = "基于 Zygisk 的 ART hooking 框架，提供与原 Xposed 一致的 API，用于模块化修改应用行为。",
+                hasAction = false,
+                hasWebUi = true,
+            ),
+            ModuleEntry(
+                id = "tricky_store",
+                name = "Tricky Store",
+                version = "v1.2.0",
+                author = "5ec1cff",
+                description = "为指定应用提供完整的密钥库（KeyStore）与硬件证明支持，修复部分应用的完整性校验失败问题。",
+                hasAction = true,
+            ),
+            ModuleEntry(
+                id = "susfs4ksu",
+                name = "SUSFS4KSU",
+                version = "v2.0.0",
+                author = "sidex15",
+                description = "内核级路径与挂载隐藏方案，配合 KernelSU 使用可让 root 痕迹对检测方不可见。",
+                enabled = false,
+                hasUpdate = true,
+            ),
+            ModuleEntry(
+                id = "meta_hybrid",
+                name = "Hybrid Mount",
+                version = "v3.1.2",
+                author = "HuskyDG",
+                description = "元模块：把模块文件以 overlayfs 方式挂载，减少对系统分区的写入。",
+                metaModule = true,
+                hasAction = true,
+            ),
+            ModuleEntry(
+                id = "play_integrity_fix",
+                name = "Play Integrity Fix",
+                version = "v18.2",
+                author = "chiteroman",
+                description = "修复 Play Integrity 基础完整性校验，需要在模块内配置一份可用的指纹（fingerprint）。",
+                enabled = false,
+                remove = true,
+            ),
+        )
+}

@@ -1,3 +1,80 @@
 <resources>
-    <string name="app_name">MyApp</string>
+    <string name="app_name">NekoSU</string>
+
+    <!-- 首页 -->
+    <string name="home_working">运行中</string>
+    <string name="home_working_version">%1$s</string>
+    <string name="home_new_version">发现新版本 v1.1.1，点击查看更新日志</string>
+    <string name="home_device_model">设备型号</string>
+    <string name="home_manager_version">管理器版本</string>
+    <string name="home_selinux_status">SELinux</string>
+    <string name="home_seccomp_status">Seccomp</string>
+    <string name="home_kernel">内核版本</string>
+    <string name="home_fingerprint">系统指纹</string>
+    <string name="home_support_title">赞助开发者</string>
+    <string name="home_learn_kernelsu">了解 KernelSU</string>
+
+    <!-- 通用 -->
+    <string name="superuser">超级用户</string>
+    <string name="module">模块</string>
+    <string name="settings">设置</string>
+    <string name="install">安装</string>
+    <string name="action">执行</string>
+    <string name="open">打开</string>
+    <string name="uninstall">卸载</string>
+    <string name="undo">撤销</string>
+    <string name="about">关于</string>
+    <string name="save_log">保存日志</string>
+    <string name="send_log">发送日志</string>
+
+    <string name="mochi_more">更多</string>
+    <string name="mochi_no_results">没有结果</string>
+    <string name="mochi_search_apps">搜索应用</string>
+    <string name="mochi_search_modules">搜索模块</string>
+    <string name="mochi_home_details">设备信息</string>
+    <string name="mochi_home_support_short">捐助以支持开发者</string>
+    <string name="mochi_home_learn_short">安装方式与模块开发</string>
+    <string name="mochi_credit">界面由 mochi-compose 构建</string>
+    <string name="mochi_su_section_root">已授权</string>
+    <string name="mochi_su_section_custom">自定义配置</string>
+    <string name="mochi_su_section_others">其他应用</string>
+
+    <!-- 超级用户 -->
+    <string name="sort_by_name">按名称排序</string>
+    <string name="sort_by_package_name">按包名排序</string>
+    <string name="sort_by_install_time">按安装时间排序</string>
+    <string name="sort_reverse">反向排序</string>
+    <string name="show_system_apps">显示系统应用</string>
+
+    <!-- 模块 -->
+    <string name="module_empty">还没有安装模块</string>
+    <string name="module_update">更新</string>
+    <string name="module_sort_action_first">有动作的模块在前</string>
+    <string name="module_sort_enabled_first">已启用的模块在前</string>
+
+    <!-- 设置 -->
+    <string name="settings_check_update">检查更新</string>
+    <string name="settings_check_update_summary">启动时检查管理器的新版本</string>
+    <string name="settings_module_check_update">检查模块更新</string>
+    <string name="settings_ui_mode">界面风格</string>
+    <string name="settings_theme">主题</string>
+    <string name="settings_theme_summary">配色、字体、圆角与动效</string>
+    <string name="settings_sucompat">Root 兼容模式</string>
+    <string name="settings_mode_enable_by_default">默认启用</string>
+    <string name="settings_mode_disable_until_reboot">重启前禁用</string>
+    <string name="settings_mode_disable_always">始终禁用</string>
+    <string name="settings_kernel_umount">内核级卸载</string>
+    <string name="settings_kernel_umount_summary">按应用的卸载策略在内核层隐藏模块</string>
+    <string name="settings_selinux_hide">隐藏 SELinux 修改</string>
+    <string name="settings_selinux_hide_summary">对已授权应用隐藏 SELinux 的 permissive 状态</string>
+    <string name="settings_sulog">超级用户日志</string>
+    <string name="settings_sulog_summary">记录 su 授权与命令执行</string>
+    <string name="settings_adb_root">ADB Root</string>
+    <string name="settings_adb_root_summary">允许 adb shell 直接获得 root</string>
+    <string name="settings_soft_reboot">软重启</string>
+    <string name="settings_soft_reboot_summary">重启系统服务而不是整机，速度更快</string>
+    <string name="settings_umount_modules_default">默认卸载模块</string>
+    <string name="settings_umount_modules_default_summary">新应用默认使用「卸载模块」策略</string>
+    <string name="enable_web_debugging">Web 调试</string>
+    <string name="enable_web_debugging_summary">允许通过 WebUI 调试模块页面</string>
 </resources>

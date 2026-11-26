@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.example.myapp.ui.theme
+package com.nekosu.manager.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
