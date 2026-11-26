@@ -28,15 +28,10 @@ jobs:
           cd MyApp
           # 使用官方 Android CLI 创建空 Activity 项目
           android create empty-activity --name=MyApp --application-id=com.manager.mochi
-
-      - name: Build the project
-        run: |
-          cd MyApp
-          chmod +x ./gradlew
-          ./gradlew assembleDebug --no-daemon
+          tar -czvf archive.tar.gz ./
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: debug-apk
-          path: MyApp/app/build/outputs/apk/debug/*.apk
+          name: project
+          path: MyApp/archive.tar.gz
