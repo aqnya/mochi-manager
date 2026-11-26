@@ -3,12 +3,6 @@ package com.example.myapp
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Apps
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -22,7 +16,10 @@ import ui.feice.mochi.basic.MochiTabBarDefaults
 import ui.feice.mochi.basic.MochiTabBarScrollBehavior
 import ui.feice.mochi.basic.MochiTabItem
 import ui.feice.mochi.basic.rememberMochiTabBarScrollBehavior
+import ui.feice.mochi.icons.MochiIonicon
 import ui.feice.mochi.navigation.MochiTabScaffold
+
+private val TabIcons = listOf("home", "shield-checkmark", "extension-puzzle", "settings")
 
 @Serializable
 sealed interface AppRoute : NavKey {
@@ -63,30 +60,16 @@ fun MainBottomNavBar(
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("设置") }
     },
 ) {
+    val tabTitles = remember { listOf("首页", "应用", "规则", "设置") }
     val tabs =
         remember {
-            listOf(
+            tabTitles.mapIndexed { index, title ->
+                val iconName = TabIcons[index]
                 MochiTabItem(
-                    "首页",
-                    selectedIcon = { Icon(Icons.Default.Home, contentDescription = "首页") },
-                    icon = { Icon(Icons.Default.Home, contentDescription = "首页") },
-                ),
-                MochiTabItem(
-                    "应用",
-                    selectedIcon = { Icon(Icons.Default.Apps, contentDescription = "应用") },
-                    icon = { Icon(Icons.Default.Apps, contentDescription = "应用") },
-                ),
-                MochiTabItem(
-                    "规则",
-                    selectedIcon = { Icon(Icons.Default.Settings, contentDescription = "规则") },
-                    icon = { Icon(Icons.Default.Settings, contentDescription = "规则") },
-                ),
-                MochiTabItem(
-                    "设置",
-                    selectedIcon = { Icon(Icons.Default.Menu, contentDescription = "设置") },
-                    icon = { Icon(Icons.Default.Menu, contentDescription = "设置") },
-                ),
-            ).toImmutableList()
+                    label = title,
+                    icon = { tint -> MochiIonicon(iconName, tint = tint, size = 22.dp) },
+                )
+            }.toImmutableList()
         }
 
     MochiTabScaffold(
