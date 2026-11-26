@@ -19,7 +19,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
-import com.example.myapp.R
 import com.example.myapp.ui.main.MainScreen
 
 private val topLevelTabs: List<AppRoute> =
@@ -59,7 +58,6 @@ fun MainNavigation(modifier: Modifier = Modifier) {
                         val target = topLevelTabs[index]
                         selectedTabIndex = index
                         if (currentRoute != target) {
-                            // 切换到目标顶级 Tab（若当前在子页，先弹出子页回到顶级层级）
                             while (backStack.size > 1 && backStack.lastOrNull() !in topLevelTabs) {
                                 backStack.removeLastOrNull()
                             }
@@ -70,6 +68,7 @@ fun MainNavigation(modifier: Modifier = Modifier) {
                             }
                         }
                     },
+                    onNavigate = { navKey -> backStack.add(navKey) },
                     modifier = Modifier.navigationBarsPadding(),
                 )
             }
@@ -90,7 +89,7 @@ fun MainNavigation(modifier: Modifier = Modifier) {
                 entryProvider {
                     entry<AppRoute.Home> {
                         MainScreen(
-                            onItemClick = { itemId ->
+                            onItemClick = { _ ->
                                 backStack.add(AppRoute.Home)
                             },
                         )

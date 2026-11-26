@@ -1,15 +1,12 @@
 package com.example.myapp
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.NavKey
+import com.example.myapp.ui.main.MainScreen
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.serialization.Serializable
 import ui.feice.mochi.basic.MochiTabBarDefaults
@@ -18,7 +15,6 @@ import ui.feice.mochi.basic.MochiTabItem
 import ui.feice.mochi.basic.rememberMochiTabBarScrollBehavior
 import ui.feice.mochi.icons.MochiIonicon
 import ui.feice.mochi.navigation.MochiTabScaffold
-import com.example.myapp.ui.main.MainScreen
 
 private val TabIcons = listOf("home")
 
@@ -33,6 +29,7 @@ fun MainBottomNavBar(
     selectedIndex: Int,
     onSelectIndex: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    onNavigate: (NavKey) -> Unit = {},
     scrollBehavior: MochiTabBarScrollBehavior = rememberMochiTabBarScrollBehavior(),
 ) {
     val tabTitles = remember { listOf("首页") }
@@ -54,7 +51,12 @@ fun MainBottomNavBar(
         collapseOnScroll = false,
     ) { page ->
         when (page) {
-            0 -> MainScreen(onItemClick = { itemId -> onNavigate(AppRoute.Home(itemId)) })
+            0 ->
+                MainScreen(
+                    onItemClick = { _ ->
+                        onNavigate(AppRoute.Home)
+                    },
+                )
         }
     }
 }
