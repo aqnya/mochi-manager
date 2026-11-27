@@ -87,6 +87,8 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // kotlinx-coroutines 的调试探针：只在挂调试器时有用，纯体积，APK 里排除
+            excludes += "DebugProbesKt.bin"
         }
         jniLibs {
             // ncore 是「顶着 .so 名字的可执行文件」：内核要按路径读它、首次启动还要
