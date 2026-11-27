@@ -296,7 +296,11 @@ private fun ImportDialogs(
                 visible = true,
                 onDismissRequest = onDismiss,
                 title = stringResource(R.string.module_install_title),
-                message = phase.items.joinToString("\n") { "• ${it.displayName}（${formatSize(it.size)}）" },
+                message =
+                    stringResource(
+                        R.string.module_install_prompt_with_name,
+                        phase.items.mapIndexed { i, item -> "\n${i + 1}. ${item.displayName}" }.joinToString(""),
+                    ),
                 icon = icon,
                 actions =
                     persistentListOf(

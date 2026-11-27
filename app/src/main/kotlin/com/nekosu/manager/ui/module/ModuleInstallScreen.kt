@@ -2,24 +2,15 @@ package com.nekosu.manager.ui.module
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -31,32 +22,25 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nekosu.manager.R
 import com.nekosu.manager.data.InstallState
 import com.nekosu.manager.data.LogExport
 import com.nekosu.manager.data.ModuleInstallSession
-import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.launch
 import ui.feice.mochi.basic.MochiBarGroup
 import ui.feice.mochi.basic.MochiBarGroupItem
-import ui.feice.mochi.basic.MochiButton
 import ui.feice.mochi.basic.MochiButtonStyle
-import ui.feice.mochi.basic.MochiDialog
-import ui.feice.mochi.basic.MochiDialogAction
-import ui.feice.mochi.basic.MochiDialogActionRole
+import ui.feice.mochi.basic.MochiIconButton
 import ui.feice.mochi.basic.Text
 import ui.feice.mochi.icons.MochiIonicon
-import ui.feice.mochi.list.MochiListCard
-import ui.feice.mochi.list.MochiListDefaults
 import ui.feice.mochi.navigation.MochiBackButton
 import ui.feice.mochi.navigation.MochiLazyCompactTitleScaffold
 import ui.feice.mochi.theme.MochiTheme
@@ -66,15 +50,15 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 模块安装的实时输出页。
+ * 模块安装页，照 KernelSU PR 的刷写页（`FlashScreen`）来做。
  *
- * 安装脚本不是「静默跑完再给结果」的：metamodule 之类会在中途 `ui_print` 一句
- * 「按音量上键继续」，然后用音量键分支；也有脚本用 `read` 等一行输入。原来把整个
- * `su -c ncore module install` 一次性执行、结束才看输出，等于把这些提示全吞掉，
- * 脚本就一直等在那儿，用户只看到「正在安装」转圈。
+ * 结构就三件东西：
+ * - 顶栏标题跟着状态走：正在安装 / 安装成功 / 安装失败，右侧保存日志
+ * - 正文是一整块等宽终端输出，新行自动滚到底，不做状态卡、提示条、输入框
+ * - 成功后右下角一个圆形按钮：需要重启就「重启」，热安装则「关闭」
  *
- * 现在改成流式：ncore 的每行输出即时进终端区，检测到等待提示就展开输入框
- * （音量键脚本只需按物理键，`read` 脚本可以在输入框里回话）。
+ * 安装中禁用返回（PR 里 `backEnabled = flashingStatus != FLASHING`），音量键脚本
+ * 的提示直接来自脚本自己的 `ui_print`，用户按物理键继续。
  */
 @Composable
 fun ModuleInstallScreen(
@@ -84,39 +68,30 @@ fun ModuleInstallScreen(
     val state by ModuleInstallSession.state.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val cs = MochiTheme.colorScheme
 
-    var askCancel by remember { mutableStateOf(false) }
-    var input by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
-
     val scroll = rememberScrollState()
-    val text = remember(state.lines) { state.lines.joinToString("\n") }
+    val text = remember(state.lines) { state.text }
 
-    // 终端高度跟着行数走：日志少时不留一大片空白，日志多时封顶，下面的输入框和按钮
-    // 必须留在首屏里——交互式安装等的是用户按键，按钮被挤出屏幕就等于没法操作。
-    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
-    val consoleHeight =
-        remember(state.lines.size, screenHeight) {
-            ((state.lines.size * 16).dp + 26.dp).coerceIn(170.dp, screenHeight * 0.42f)
-        }
-
-    // 交互式安装要用户按键，屏幕灭了就按不到
+    // 交互式脚本要用户按键，屏幕灭了就按不到
     KeepScreenOn(state.running)
 
-    // 有新输出就跟到底；用户上滑查看历史时下一次输出会把视野拉回底部，和 adb logcat 一致
+    // PR：刷写中不给退，避免脚本跑到一半被切走
+    BackHandler(enabled = state.running) {}
+
+    // 有新输出就跟到底，和 adb logcat 一样
     LaunchedEffect(state.lines.size) {
-        if (state.lines.isNotEmpty()) {
+        if (text.isNotEmpty()) {
             withFrameNanosCompat()
             scroll.animateScrollTo(scroll.maxValue)
         }
     }
 
     fun leave() {
-        if (state.running) askCancel = true else onExit()
+        if (state.running) return
+        ModuleInstallSession.dismiss()
+        onExit()
     }
-
-    BackHandler(enabled = state.running) { askCancel = true }
 
     fun saveLog() {
         if (saving || text.isBlank()) return
@@ -140,249 +115,95 @@ fun ModuleInstallScreen(
         }
     }
 
-    MochiLazyCompactTitleScaffold(
-        title = stringResource(R.string.module_install_title),
-        subtitle = subtitleOf(state),
-        modifier = modifier,
-        navigationIcon = { MochiBackButton(onClick = { leave() }) },
-        actions = {
-            MochiBarGroup(navId = "module.install.actions") {
-                MochiBarGroupItem(
-                    onClick = { saveLog() },
-                    navId = "module.install.save",
-                    contentKey = "download",
-                ) { MochiIonicon("download-outline") }
-            }
-        },
-    ) {
-        item(key = "status") {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                MochiListCard {
-                    Column(Modifier.fillMaxWidth().padding(MochiListDefaults.RowPadding)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (state.running) {
-                                Box(
-                                    Modifier
-                                        .size(8.dp)
-                                        .background(cs.primary, RoundedCornerShape(4.dp)),
-                                )
-                                Spacer(Modifier.width(10.dp))
-                            }
-                            Text(
-                                statusText(state),
-                                style = MochiTheme.textStyles.body.copy(fontWeight = FontWeight.Medium),
-                                color = cs.onSurface,
-                            )
-                        }
-                        if (state.failures.isNotEmpty()) {
-                            Spacer(Modifier.height(6.dp))
-                            state.failures.forEach { failure ->
-                                Text(
-                                    failure,
-                                    style = MochiTheme.textStyles.footnote,
-                                    color = cs.error,
-                                )
-                            }
-                        }
-                        if (state.running) {
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                stringResource(R.string.module_install_keep_screen),
-                                style = MochiTheme.textStyles.footnote,
-                                color = cs.onSurfaceVariant,
-                            )
-                        }
-                    }
+    Box(modifier.fillMaxSize()) {
+        MochiLazyCompactTitleScaffold(
+            title = titleOf(state),
+            modifier = Modifier.fillMaxSize(),
+            navigationIcon = { MochiBackButton(onClick = { leave() }) },
+            actions = {
+                MochiBarGroup(navId = "module.install.actions") {
+                    MochiBarGroupItem(
+                        onClick = { saveLog() },
+                        navId = "module.install.save",
+                        contentKey = "download",
+                    ) { MochiIonicon("download-outline") }
                 }
-
-                if (state.running && state.awaitingInput) {
-                    Spacer(Modifier.height(10.dp))
-                    WaitingBar(stringResource(R.string.module_install_waiting))
-                }
-            }
-        }
-
-        item(key = "console") {
-            MochiListCard(
-                Modifier
-                    .fillMaxWidth()
-                    .height(consoleHeight)
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-            ) {
+            },
+        ) {
+            item(key = "console") {
                 Console(
                     text = if (text.isBlank()) "…" else text,
                     scroll = scroll,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillParentMaxHeight(),
                 )
             }
         }
 
-        if (state.running && state.awaitingInput) {
-            item(key = "input") {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedTextField(
-                        value = input,
-                        onValueChange = { input = it },
-                        singleLine = true,
-                        placeholder = {
-                            Text(
-                                stringResource(R.string.module_install_input_hint),
-                                style = MochiTheme.textStyles.footnote,
-                                color = cs.onSurfaceVariant,
-                            )
-                        },
-                        colors =
-                            OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = cs.onSurface,
-                                unfocusedTextColor = cs.onSurface,
-                                cursorColor = cs.primary,
-                                focusedBorderColor = cs.primary,
-                                unfocusedBorderColor = cs.outlineVariant,
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                            ),
-                        modifier = Modifier.weight(1f),
-                    )
-                    MochiButton(
-                        onClick = {
-                            ModuleInstallSession.sendInput(input)
-                            input = ""
-                        },
-                        enabled = input.isNotBlank(),
-                        style = MochiButtonStyle.Filled,
-                    ) { Text(stringResource(R.string.module_install_send)) }
-                }
-            }
-        }
-
-        item(key = "actions") {
-            Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                if (state.running) {
-                    MochiButton(
-                        onClick = { askCancel = true },
-                        style = MochiButtonStyle.Filled,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text(stringResource(R.string.module_install_cancel)) }
-                } else {
-                    MochiButton(
-                        onClick = {
-                            ModuleInstallSession.dismiss()
-                            onExit()
-                        },
-                        style = MochiButtonStyle.Filled,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text(stringResource(R.string.module_install_finish)) }
-                }
+        // 只有成功才给悬浮操作，失败时按返回退出——和 PR 的 FAB 出现条件一致
+        if (state.finished && !state.failed) {
+            val reboot = state.needsReboot
+            val actionLabel = stringResource(if (reboot) R.string.module_install_reboot else R.string.module_install_close)
+            MochiIconButton(
+                onClick = {
+                    if (reboot) {
+                        ModuleInstallSession.reboot()
+                    } else {
+                        leave()
+                    }
+                },
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 20.dp, bottom = 28.dp)
+                        .size(56.dp)
+                        .semantics { contentDescription = actionLabel },
+                style = MochiButtonStyle.Filled,
+            ) {
+                MochiIonicon(
+                    if (reboot) "power" else "close-circle",
+                    size = 26.dp,
+                )
             }
         }
     }
-
-    if (askCancel) {
-        MochiDialog(
-            visible = true,
-            onDismissRequest = { askCancel = false },
-            title = stringResource(R.string.module_install_cancel_title),
-            message = stringResource(R.string.module_install_cancel_message),
-            icon = { MochiIonicon("alert-circle", size = 44.dp) },
-            actions =
-                persistentListOf(
-                    MochiDialogAction(stringResource(R.string.module_install_close), MochiDialogActionRole.Cancel),
-                    MochiDialogAction(
-                        stringResource(R.string.module_install_cancel),
-                        MochiDialogActionRole.Destructive,
-                        onClick = {
-                            askCancel = false
-                            ModuleInstallSession.cancel()
-                            ModuleInstallSession.dismiss()
-                            onExit()
-                        },
-                    ),
-                ),
-        )
-    }
 }
 
-@Composable
-private fun WaitingBar(message: String) {
-    val cs = MochiTheme.colorScheme
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(cs.primary.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        MochiIonicon("alert-circle", size = 18.dp, tint = cs.primary)
-        Spacer(Modifier.width(8.dp))
-        Text(
-            message,
-            style = MochiTheme.textStyles.footnote,
-            color = cs.primary,
-        )
-    }
-}
-
+/** 终端输出：PR 里就是一整块 12sp 等宽文本，背景跟页面一致，不做卡片。 */
 @Composable
 private fun Console(
     text: String,
-    scroll: androidx.compose.foundation.ScrollState,
+    scroll: ScrollState,
     modifier: Modifier = Modifier,
 ) {
-    val cs = MochiTheme.colorScheme
-    Box(
-        modifier
-            .background(cs.surfaceContainerLowest.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
-            .verticalScroll(scroll)
-            .padding(12.dp),
-    ) {
-        SelectionContainer {
-            Text(
-                text,
-                style =
-                    MochiTheme.textStyles.footnote.copy(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        lineHeight = 16.sp,
-                    ),
-                color = cs.onSurface,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+    SelectionContainer {
+        Text(
+            text,
+            style =
+                MochiTheme.textStyles.footnote.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                ),
+            color = MochiTheme.colorScheme.onSurface,
+            modifier =
+                modifier
+                    .fillMaxWidth()
+                    .verticalScroll(scroll)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+        )
     }
 }
 
 @Composable
-private fun statusText(state: InstallState): String {
-    val current = state.current
-    return when {
-        state.running && current != null ->
-            stringResource(R.string.module_install_running, current.displayName, state.index + 1, state.items.size)
-
-        state.cancelled -> stringResource(R.string.module_install_cancelled)
-        state.failures.isNotEmpty() ->
-            listOf(
-                if (state.success > 0) stringResource(R.string.module_install_success, state.success) else "",
-                stringResource(R.string.module_install_failed_count, state.failures.size),
-            ).filter { it.isNotBlank() }.joinToString("，")
-
-        else -> stringResource(R.string.module_install_success, state.success)
-    }
-}
-
-@Composable
-private fun subtitleOf(state: InstallState): String {
-    val current = state.current
-    return when {
-        state.running && current != null -> current.displayName
-        state.cancelled -> stringResource(R.string.module_install_cancelled)
-        state.started -> stringResource(R.string.module_install_done)
-        else -> stringResource(R.string.module_install_empty)
-    }
-}
+private fun titleOf(state: InstallState): String =
+    stringResource(
+        when {
+            state.running -> R.string.module_install_flashing
+            state.failed -> R.string.module_install_failed_title
+            state.started -> R.string.module_install_success_title
+            else -> R.string.module_install_title
+        },
+    )
 
 /** 安装期间保持屏幕常亮，退出页面立刻还原，不影响其它界面。 */
 @Composable

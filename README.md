@@ -238,16 +238,18 @@ KernelSU 的 su 白名单与 profile 都以 **uid** 为粒度，所以列表不�
 复制到 `cacheDir/module_import` 并校验 ZIP 魔数（512 MB 上限），再把真实路径交给 ncore/ksud——
 root shell 读不了文档提供者的 fd，必须落盘。
 
-开始安装后进入**安装输出页**（`ui/module/ModuleInstallScreen.kt`），不再是转圈对话框：
+开始安装后进入**安装输出页**（`ui/module/ModuleInstallScreen.kt`），版式照 KernelSU PR 的刷写页
+（`FlashScreen`）来做，不额外加状态卡和对话框：
 
 | 能力 | 实现 |
 | --- | --- |
-| 实时输出 | `RootShell.execStreaming()` 按行回调，ncore 的 `ui_print` 一到就追加到终端区（等宽字体、可选中复制） |
-| 交互脚本 | 输出命中「音量键 / press volume / 请输入 / [y/n]」时展开输入区与提示条，物理音量键直接按，`read` 型脚本用输入框回话（写入脚本 stdin） |
+| 顶栏 | 标题跟着状态走：正在安装 / 安装成功 / 安装失败；右侧下载图标保存日志 |
+| 实时输出 | `RootShell.execStreaming()` 按行回调，ncore 的 `ui_print` 一到就追加到整块等宽终端区（12sp、可选中复制、自动滚到底） |
+| 交互脚本 | 提示就是脚本自己打的一行 `ui_print`（如「按音量上键继续」），用户按**物理音量键**继续；页面不做输入框，`ESC[H[ESC[J` 清屏序列按清屏处理 |
 | 会话保持 | 任务在 `ModuleInstallSession`（应用级 `SupervisorJob`）里跑，旋转屏幕、切后台都不会中断；页面只是订阅者 |
-| 中断 | 「取消安装」确认后销毁 su 进程，协程取消会向上传播，不留后台残留 |
-| 结果 | 逐个包记账，失败原因按文件名列出；完成后「完成」回到列表并重读 `/data/adb/modules` |
-| 保存日志 | 右上角下载图标写 `Download/NekoSU/NekoSU_module_install_<时间>.log` |
+| 返回 | 安装中禁用返回与侧滑，避免脚本跑到一半被切走——与 PR 的 `backEnabled = flashingStatus != FLASHING` 一致 |
+| 结果 | 成功后右下角只给一个圆形按钮：模块目录未就位 / 带 `update` 标记（需要重启）显示「重启」，热安装显示「关闭」；失败无悬浮按钮，按返回退出并重读 `/data/adb/modules` |
+| 保存日志 | 右上角图标写 `Download/NekoSU/NekoSU_module_install_<时间>.log` |
 
 安装期间保持屏幕常亮（`keepScreenOn`）：交互式脚本等的是按键，屏幕灭了就按不到。
 

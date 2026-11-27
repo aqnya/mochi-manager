@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.util.zip.ZipFile
 
 /** 用户从文件选择器挑中的模块包，已经复制到应用自己的缓存目录。 */
 data class StagedModule(
@@ -83,6 +84,28 @@ object LocalModuleImport {
                 input.read(head) == 2 && head[0] == 'P'.code.toByte() && head[1] == 'K'.code.toByte()
             }
         }.getOrDefault(false)
+
+    /**
+     * 从 ZIP 里的 `module.prop` 读模块 id，用来判断装完后模块目录有没有就位。
+     *
+     * 读不到或格式不合法就返回 null，调用方按「需要重启」保守处理——和 KernelSU
+     * 的 `moduleNeedsReboot` 一致：探测不了就当它需要重启。
+     */
+    internal fun moduleId(file: File): String? =
+        runCatching {
+            ZipFile(file).use { zip ->
+                val entry = zip.getEntry("module.prop") ?: return@use null
+                zip.getInputStream(entry).bufferedReader().useLines { lines ->
+                    lines
+                        .map { it.trim() }
+                        .firstOrNull { it.startsWith("id=") }
+                        ?.substringAfter('=')
+                        ?.trim()
+                }
+            }
+        }.getOrNull()?.takeIf { MODULE_ID.matches(it) }
+
+    private val MODULE_ID = Regex("^[a-zA-Z][a-zA-Z0-9._-]+$")
 
     private fun displayName(resolver: ContentResolver, uri: Uri): String? =
         runCatching {

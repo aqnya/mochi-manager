@@ -2,7 +2,11 @@ package com.nekosu.manager.data
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -38,5 +42,45 @@ class LocalModuleImportTest {
         assertFalse(LocalModuleImport.looksLikeZip(temp("module.prop\nid=x\n".toByteArray())))
         assertFalse(LocalModuleImport.looksLikeZip(temp(ByteArray(0))))
         assertFalse(LocalModuleImport.looksLikeZip(temp(byteArrayOf(0x50))))
+    }
+
+    @Test
+    fun `从 module_prop 读模块 id`() {
+        val zip =
+            File.createTempFile("module", ".zip").apply {
+                deleteOnExit()
+                ZipOutputStream(outputStream()).use { out ->
+                    out.putNextEntry(ZipEntry("module.prop"))
+                    out.write("id=demo_module\nname=Demo\nversion=v1\n".toByteArray())
+                    out.closeEntry()
+                }
+            }
+
+        assertEquals("demo_module", LocalModuleImport.moduleId(zip))
+    }
+
+    @Test
+    fun `没有 module_prop 或 id 不合法时返回 null`() {
+        val empty =
+            File.createTempFile("module", ".zip").apply {
+                deleteOnExit()
+                ZipOutputStream(outputStream()).use { out ->
+                    out.putNextEntry(ZipEntry("README.md"))
+                    out.write("hi".toByteArray())
+                    out.closeEntry()
+                }
+            }
+        assertNull(LocalModuleImport.moduleId(empty))
+
+        val badId =
+            File.createTempFile("module", ".zip").apply {
+                deleteOnExit()
+                ZipOutputStream(outputStream()).use { out ->
+                    out.putNextEntry(ZipEntry("module.prop"))
+                    out.write("id=-bad id\n".toByteArray())
+                    out.closeEntry()
+                }
+            }
+        assertNull(LocalModuleImport.moduleId(badId))
     }
 }

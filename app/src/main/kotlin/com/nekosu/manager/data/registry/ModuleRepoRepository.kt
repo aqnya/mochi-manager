@@ -2,6 +2,7 @@ package com.nekosu.manager.data.registry
 
 import android.content.Context
 import android.util.Log
+import com.nekosu.manager.data.LocalModuleImport
 import com.nekosu.manager.data.RootShell
 import com.nekosu.manager.data.StreamingShell
 import com.nekosu.manager.neko.Ncore
@@ -197,6 +198,26 @@ object ModuleInstaller {
 
     /** 安装脚本要现场看输出（还可能等用户按键），超时给宽一点。 */
     private const val STREAM_TIMEOUT_SECONDS = 300L
+
+    /**
+     * 装完是否需要重启。
+     *
+     * 和 KernelSU 刷写页的 `moduleNeedsReboot` 同一套判断：模块目录
+     * `/data/adb/modules/<id>` 已经就位、且没有 `update` 标记，说明热安装已经生效，
+     * 不用重启；读不到 id、shell 探测失败都按需要重启处理，宁可多提示一次。
+     */
+    suspend fun needsReboot(zip: File): Boolean {
+        val id = LocalModuleImport.moduleId(zip) ?: return true
+        return try {
+            val probe = "[ -d /data/adb/modules/$id ] && [ ! -e /data/adb/modules/$id/update ]"
+            RootShell.exec(probe, 20L).exitCode != 0
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Log.w(LOG_TAG, "判断是否需要重启失败：${e.message}")
+            true
+        }
+    }
 
     /**
      * 非流式入口：仓库详情页装完才需要结果，用不到实时输出。
