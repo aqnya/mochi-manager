@@ -1,7 +1,10 @@
 package com.nekosu.manager.data
 
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
@@ -57,5 +60,13 @@ class NekoStatusTest {
     fun `探测失败也按未安装处理而不是已安装`() {
         val status = NekoStatus(kernelVersion = null, ncore = NcoreImage.Unknown, checked = true)
         assertEquals(NekoStatus.Phase.Absent, status.phase)
+    }
+
+    @Test
+    fun `首帧前预热后状态已就绪不是 Checking`() {
+        NekoStatusRepository.preload(ApplicationProvider.getApplicationContext())
+        val status = NekoStatusRepository.state.value
+        assertTrue(status.checked)
+        assertFalse(status.phase == NekoStatus.Phase.Checking)
     }
 }

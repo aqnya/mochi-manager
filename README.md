@@ -109,6 +109,14 @@ CLI，不复制镜像、不跑 `ncore install`、也不做 `manager scan`——�
 / `Absent`（都没有，探测失败也算这一态）。未安装时状态卡显示「未安装」，模块计数显示「—」，
 不会再出现写死的「运行中 v1.1.0-12851 / GKI」。
 
+**首帧不容忍中间态**：`MainActivity.onCreate` 在 `setContent` 之前同步调用
+`NekoStatusRepository.preload()`，探完才让首页组合，所以第一帧就是 `Active / Detached / Absent`
+的真实状态，不会闪一下「正在检查」。首页自身还有一道 `remember { preload }` 幂等守卫，
+覆盖深层链接 / 测试等未走 MainActivity 的入口。启动探测设了 3s 硬上限（防止 su 授权弹窗
+卡死主线程），超时按 `checked=true` 的「未安装」落盘，不会停在 Checking；
+进入首页后 `refresh()` 再异步重探一次，覆盖刚装完模块的场景——它只在探测结束时一次性
+写入完整状态，不会把界面退回中间态。
+
 ### 签名约束
 
 内核的 ncore 验签一共三处，底层都落到 `nksu_ncore_verify_file`：

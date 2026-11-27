@@ -74,8 +74,13 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    // 首帧守卫：正常启动 MainActivity 已在 setContent 前预热，这里立即返回；
+    // 若从其他入口直接组合首页（测试 / 深层链接），同步探完再画，绝不让「正在检查」上屏。
+    remember { NekoStatusRepository.preload(context) }
     LaunchedEffect(Unit) {
         SuProfileStore.init(context)
+        // 进入首页时重探一次，覆盖安装完模块后刚回到首页的情况；
+        // 此时 state 已是 checked 的真实状态，refresh 完成前也不会退回中间态。
         NekoStatusRepository.refresh(context)
         // 内核通道可用时这份同步才会真的写进去，否则保持本地记录
         SuProfileStore.refreshFromKernel(context)

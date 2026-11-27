@@ -4,9 +4,12 @@ import android.content.Context
 import android.util.Log
 import com.nekosu.manager.neko.NekoKernel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 /** `/data/adb/ncore` 的真实存在情况。 */
 enum class NcoreImage {
@@ -61,8 +64,9 @@ data class NekoStatus(
 /**
  * 安装状态的唯一来源。
  *
- * 界面只观察 [state]，不再自己拼「已安装」的判断；[refresh] 是唯一写入口，
- * 每次进入首页/模块页时重新探测，避免装完内核模块还要杀进程才能看到变化。
+ * 界面只观察 [state]，不再自己拼「已安装」的判断。[preload] 在首帧之前同步
+ * 探测并写入，因此首页拿到的第一帧就是真实状态，永远不会经过 [NekoStatus.Phase.Checking]；
+ * [refresh] 供安装完模块后主动重探，同样只在探测结束时一次性写入。
  */
 object NekoStatusRepository {
     private const val TAG = "NekoSU/Status"
@@ -70,8 +74,31 @@ object NekoStatusRepository {
     /** 内核引导 ncore 时使用的固定路径。 */
     const val NCORE_PATH = "/data/adb/ncore"
 
+    /** 启动阶段同步探测的硬上限，避免 su 授权弹窗把主线程卡死。 */
+    private const val PRELOAD_TIMEOUT_MS = 3_000L
+
     private val _state = MutableStateFlow(NekoStatus())
     val state: StateFlow<NekoStatus> = _state
+
+    /**
+     * 首帧之前调用：同步探测一次，写完才让界面组合。
+     *
+     * 和 `DeviceInfoRepository.preload` 同一套约定——启动阶段可接受短暂阻塞，
+     * 换来的是首页第一帧就显示「已安装 / 未安装」而不是转圈的中间态。
+     * su 弹窗等因素导致超时时按 [NcoreImage.Unknown] 落盘（checked=true），
+     * 显示「未安装」而不是永远停在检查中；随后 [refresh] 会再探一次。
+     */
+    fun preload(context: Context) {
+        if (_state.value.checked) return
+        runBlocking {
+            try {
+                withTimeout(PRELOAD_TIMEOUT_MS) { refresh(context) }
+            } catch (e: TimeoutCancellationException) {
+                Log.w(TAG, "启动探测超时（${PRELOAD_TIMEOUT_MS}ms），按未安装呈现")
+                _state.value = NekoStatus(checked = true)
+            }
+        }
+    }
 
     suspend fun refresh(context: Context) {
         val app = context.applicationContext
