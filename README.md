@@ -156,7 +156,7 @@ KernelSU 的 su 白名单与 profile 都以 **uid** 为粒度，所以列表不�
 | 收集 | 生成一个 sh 脚本一次执行，逐条 `2>/dev/null`，某路径不存在只丢那一份；有 root 走 `su -c`，没有就以应用自身身份跑同一份脚本 |
 | 内容 | 设备信息（`basic.txt`）、`getprop`、`getenforce`、进程表、`dmesg`、`logcat -b all`、`mountinfo`、`/proc/modules`、`kallsyms`（临时放开 `kptr_restrict` 再还原）、tombstones / dropbox / pstore / 厂商 diag / `/data/adb/ksu/log`、`/data/adb` 清单、KernelSU 白名单与 `ksud --version` |
 | 打包 | `tar czf` 后 `chmod 0644`，文件名 `NekoSU_bugreport_yyyy-MM-dd_HH_mm.tar.gz`，放在 `cacheDir` |
-| 保存 | 先生成再弹系统文件选择器（`CreateDocument("application/gzip")`），取消或写完都会删掉缓存里的临时包，不留 0 字节文件 |
+| 保存 | 直接写入公共下载目录 `Download/NekoSU/`（10+ 走 `MediaStore`，`IS_PENDING` 收尾；9 及以下写公共下载目录，无权限时退到应用外部目录），完成后删掉缓存里的临时包，弹窗里给出完整路径 |
 | 分享 | `FileProvider`（`${applicationId}.fileprovider`，只暴露 `cache-path`）转成 `content://`，走 `ACTION_SEND` chooser |
 | 无 root | 不失败：设备信息、SELinux、进程表、`getprop`、自身 logcat 照旧收集；dmesg、`/data/adb`、tombstones 等读不到的 0 字节输出会被删掉并写进 `missing.txt`，导出前弹窗说明缺了几项，用户可继续或取消 |
 | 反馈 | 收集期间有不可取消的进度弹窗；真正的失败（脚本起不来、打包失败、超时）才报错，不会静默失败 |
@@ -165,3 +165,17 @@ KernelSU 的 su 白名单与 profile 都以 **uid** 为粒度，所以列表不�
 挂住把界面一起拖死；单次输出上限 4 MB。`isRootAvailable()` 先跑一次 `su -c id -u`（会被拒绝、超时、没有 su
 都算无 root），之后无 root 分支用 `execAsUser()`（`sh -c`，不经 su）执行收集与打包。
 `basic.txt` 里记了 `Root: yes/no`，看报告的人一眼能知道这份日志是哪种身份收集的。
+
+### 为什么不用系统文件选择器
+
+早期版本用 `ActivityResultContracts.CreateDocument("application/gzip")` 让用户挑位置，在 HyperOS 上直接失败：
+文档界面拿到 `application/gzip` 后立刻返回一个**没有 extras** 的结果，MIUI 的
+`ActivityThread.deliverResultsIfNeeded` 读 `Bundle.getString` 时 NPE，应用只收到 `uri = null`，
+表现就是「点保存没反应」。日志里对应这一行：
+
+```
+E ActivityThread: fail in deliverResultsIfNeeded java.lang.NullPointerException ...
+```
+
+改成 `MediaStore.Downloads` 直接写公共下载目录后不再依赖文档界面，也不需要任何运行时权限；
+旧系统（API 28 及以下）才需要 `WRITE_EXTERNAL_STORAGE`（清单里带 `maxSdkVersion="28"`）。

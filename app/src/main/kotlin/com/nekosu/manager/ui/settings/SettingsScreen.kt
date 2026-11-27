@@ -1,8 +1,6 @@
 package com.nekosu.manager.ui.settings
 
 import android.content.Intent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
@@ -21,6 +19,7 @@ import androidx.core.content.FileProvider
 import com.nekosu.manager.R
 import com.nekosu.manager.data.Bugreport
 import com.nekosu.manager.data.BugreportException
+import com.nekosu.manager.data.LogExport
 import com.nekosu.manager.data.RootUnavailableException
 import com.nekosu.manager.data.ShellTimeoutException
 import com.nekosu.manager.ui.mochi.KsuSwitchRow
@@ -30,9 +29,7 @@ import com.nekosu.manager.ui.mochi.MochiCredit
 import java.io.File
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import ui.feice.mochi.basic.MochiDialog
 import ui.feice.mochi.basic.MochiDialogAction
 import ui.feice.mochi.basic.MochiDialogActionRole
@@ -67,9 +64,6 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var collecting by remember { mutableStateOf(false) }
-    // 生成完等用户选保存路径的那个文件；取消或写完就删掉，不在缓存里堆
-    var pending by remember { mutableStateOf<File?>(null) }
-    var pendingPartial by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<Pair<String, String>?>(null) }
     // 没有 root 时先收集，再问一句要不要继续导出——不直接失败
     var partial by remember { mutableStateOf<PartialLog?>(null) }
@@ -78,8 +72,6 @@ fun SettingsScreen(
     val needRoot = stringResource(R.string.log_need_root)
     val exportFailed = stringResource(R.string.log_export_failed)
     val savedTitle = stringResource(R.string.log_saved)
-    val savedMessage = stringResource(R.string.log_saved_message)
-    val savedPartialMessage = stringResource(R.string.log_saved_no_root)
     val sendLabel = stringResource(R.string.send_log)
 
     fun errorText(e: Throwable): String =
@@ -90,36 +82,6 @@ fun SettingsScreen(
             else -> e.message ?: e.javaClass.simpleName
         }
 
-    val exporter =
-        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gzip")) { uri ->
-            val file = pending
-            val wasPartial = pendingPartial
-            pending = null
-            pendingPartial = false
-            if (file == null) return@rememberLauncherForActivityResult
-            if (uri == null) {
-                file.delete()
-                return@rememberLauncherForActivityResult
-            }
-            scope.launch {
-                val written =
-                    withContext(Dispatchers.IO) {
-                        runCatching {
-                            context.contentResolver.openOutputStream(uri)?.use { out ->
-                                file.inputStream().use { it.copyTo(out) }
-                            } ?: throw IllegalStateException("无法打开所选文件")
-                        }.isSuccess
-                    }
-                file.delete()
-                notice =
-                    if (!written) {
-                        failTitle to exportFailed
-                    } else {
-                        savedTitle to if (wasPartial) savedPartialMessage else savedMessage
-                    }
-            }
-        }
-
     fun deliver(
         action: LogAction,
         file: File,
@@ -127,9 +89,22 @@ fun SettingsScreen(
     ) {
         when (action) {
             LogAction.Save -> {
-                pending = file
-                pendingPartial = noRoot
-                exporter.launch(file.name)
+                scope.launch {
+                    // 直接写公共下载目录；不再走 ACTION_CREATE_DOCUMENT（HyperOS 上会立刻返回空结果）
+                    val path =
+                        runCatching { LogExport.save(context, file, file.name) }
+                            .onFailure { notice = failTitle to exportFailed }
+                            .getOrNull()
+                    file.delete()
+                    if (path != null) {
+                        notice =
+                            savedTitle to
+                                context.getString(
+                                    if (noRoot) R.string.log_saved_no_root else R.string.log_saved_message,
+                                    path,
+                                )
+                    }
+                }
             }
 
             LogAction.Share -> {
