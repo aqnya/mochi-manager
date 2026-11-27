@@ -7,7 +7,10 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nekosu.manager.data.AppearanceSettings
@@ -99,9 +102,16 @@ class ScreenRenderTest {
 
     private fun render(
         name: String,
+        scrollTo: String? = null,
         content: @Composable () -> Unit,
     ) {
         compose.setContent { NekoSUTheme { content() } }
+        if (scrollTo != null) {
+            compose.waitForIdle()
+            runCatching {
+                compose.onNode(hasScrollAction()).performScrollToNode(hasText(scrollTo))
+            }
+        }
         // 真实应用列表在 IO 线程加载，等一会儿再截
         repeat(10) {
             compose.waitForIdle()
@@ -145,6 +155,12 @@ class ScreenRenderTest {
 
     @Test
     fun theme() = render("theme") { ThemeScreen(onBack = {}) }
+
+    /** 「保存日志 / 发送日志」在设置页底部，滚动过去单独截一张。 */
+    @Test
+    fun settingsLog() = render("settings-log", scrollTo = "保存日志") {
+        SettingsScreen(onOpenTheme = {})
+    }
 
     @Test
     fun glass() {

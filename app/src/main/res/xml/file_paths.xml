@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 只把缓存目录暴露给 FileProvider：bugreport 的 tar.gz 生成在 cacheDir 根下 -->
+<paths>
+    <cache-path
+        name="bugreport"
+        path="." />
+</paths>

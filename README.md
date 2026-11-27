@@ -33,6 +33,8 @@ app/src/main/kotlin/com/nekosu/manager/
 ├── data/AppearanceSettings.kt 外观设置（玻璃开关 + 玻璃样式，settings 偏好持久化）
 ├── data/MockData.kt         仍为假数据的部分（已安装模块列表、KernelSU 运行状态）
 ├── data/registry/           模块仓库（modules.kernelsu.org v1）：解析、缓存、校验下载
+├── data/RootShell.kt        `su -c` 执行封装（带超时，不引 libsu）
+├── data/Bugreport.kt        日志收集：脚本、设备信息、tar.gz 打包
 ├── ui/MochiRoot.kt          底部四 Tab 容器
 ├── ui/home/                 首页
 ├── ui/superuser/            超级用户（真实应用列表）
@@ -53,6 +55,7 @@ app/src/main/kotlin/com/nekosu/manager/
 - 应用配置页已移植（点击超级用户列表任意一行进入）。
 - 模块页右上角的商店按钮进入**真实模块仓库**（`modules.kernelsu.org`），可搜索、按更新时间 / 名称 / 星标排序、
   看详情并从 GitHub Release 下载安装；已安装模块列表本身仍是静态模拟，安装/刷写、Sulog、关于、WebUI 尚未移植。
+- 设置页的「保存日志 / 发送日志」已接真实实现（见下文），不再是无动作的空行。
 - 二级页面用 `MochiNavHost`：iOS 侧推转场 + 跟手侧滑返回（预测性返回），路由在 `ui/superuser/SuperUserFlow.kt`。
 - 设置 → 主题是真实页面：玻璃开关切换 `MochiTheme` 的 materials（tab bar、顶栏按钮、菜单、弹窗
   一起换），值存在 `settings` 偏好里，重启保留；开启后同组多出「玻璃样式」，按 mochi demo 的
@@ -143,3 +146,19 @@ KernelSU 的 su 白名单与 profile 都以 **uid** 为粒度，所以列表不�
 界面只会显示「加载模块仓库失败」，很难看出是权限问题）；`ManifestPermissionsTest` 盯着这条。
 加载失败时页面给出「重试」按钮，缺网络权限时改为直接写明原因，不给无效的重试入口。
 站点用 JSON `null` 表示缺失字段，解析时统一按空串处理，避免把 `icon: null` 拼成 `.../null` 的图标地址。
+
+## 日志导出
+
+对齐 KernelSU 的 bugreport，设置 → 保存日志 / 发送日志：
+
+| 环节 | 实现 |
+| --- | --- |
+| 收集 | 生成一个 sh 脚本交给一次 `su -c` 执行，逐条 `2>/dev/null`，某路径不存在只丢那一份 |
+| 内容 | 设备信息（`basic.txt`）、`getprop`、`getenforce`、进程表、`dmesg`、`logcat -b all`、`mountinfo`、`/proc/modules`、`kallsyms`（临时放开 `kptr_restrict` 再还原）、tombstones / dropbox / pstore / 厂商 diag / `/data/adb/ksu/log`、`/data/adb` 清单、KernelSU 白名单与 `ksud --version` |
+| 打包 | `tar czf` 后 `chmod 0644`，文件名 `NekoSU_bugreport_yyyy-MM-dd_HH_mm.tar.gz`，放在 `cacheDir` |
+| 保存 | 先生成再弹系统文件选择器（`CreateDocument("application/gzip")`），取消或写完都会删掉缓存里的临时包，不留 0 字节文件 |
+| 分享 | `FileProvider`（`${applicationId}.fileprovider`，只暴露 `cache-path`）转成 `content://`，走 `ACTION_SEND` chooser |
+| 反馈 | 收集期间有不可取消的进度弹窗；失败弹窗区分「没 root」（`su` 起不来）与「命令超时」，不会静默失败 |
+
+`su` 走 `data/RootShell.kt`，自己按截止时间轮询读取输出并 `destroy()`，避免某些 ROM 上 `dmesg`
+挂住把界面一起拖死；单次输出上限 4 MB。

@@ -1,19 +1,41 @@
 package com.nekosu.manager.ui.settings
 
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import com.nekosu.manager.R
+import com.nekosu.manager.data.Bugreport
+import com.nekosu.manager.data.BugreportException
+import com.nekosu.manager.data.RootUnavailableException
+import com.nekosu.manager.data.ShellTimeoutException
 import com.nekosu.manager.ui.mochi.KsuSwitchRow
 import com.nekosu.manager.ui.mochi.KsuTile
 import com.nekosu.manager.ui.mochi.KsuTileColors
 import com.nekosu.manager.ui.mochi.MochiCredit
+import java.io.File
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import ui.feice.mochi.basic.MochiDialog
+import ui.feice.mochi.basic.MochiDialogAction
+import ui.feice.mochi.basic.MochiDialogActionRole
 import ui.feice.mochi.list.MochiListPickerRow
 import ui.feice.mochi.list.MochiListRow
 import ui.feice.mochi.list.MochiListSection
@@ -23,7 +45,8 @@ import ui.feice.mochi.navigation.MochiLazyLargeTitleScaffold
  * 设置：更新、外观、功能开关、高级选项和关于。所有开关都是本地状态，
  * 结构对齐 KernelSU Manager 的 Mochi 设置页。
  *
- * 「主题」是唯一真实生效的入口，点进 [ThemeScreen]；其余条目仍是移植中的占位。
+ * 已接真实能力：「主题」进入 [ThemeScreen]，「保存日志 / 发送日志」生成 bugreport（[Bugreport]）
+ * 并导出或分享。其余开关仍是移植中的占位。
  */
 @Composable
 fun SettingsScreen(
@@ -40,6 +63,93 @@ fun SettingsScreen(
     var softReboot by rememberSaveable { mutableStateOf(false) }
     var defaultUmount by rememberSaveable { mutableStateOf(false) }
     var webDebug by rememberSaveable { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var collecting by remember { mutableStateOf(false) }
+    // 生成完等用户选保存路径的那个文件；取消或写完就删掉，不在缓存里堆
+    var pending by remember { mutableStateOf<File?>(null) }
+    var notice by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    val failTitle = stringResource(R.string.log_failed)
+    val needRoot = stringResource(R.string.log_need_root)
+    val exportFailed = stringResource(R.string.log_export_failed)
+    val savedTitle = stringResource(R.string.log_saved)
+    val savedMessage = stringResource(R.string.log_saved_message)
+    val sendLabel = stringResource(R.string.send_log)
+
+    fun errorText(e: Throwable): String =
+        when (e) {
+            is RootUnavailableException -> needRoot
+            is ShellTimeoutException -> e.message ?: failTitle
+            is BugreportException -> e.message ?: failTitle
+            else -> e.message ?: e.javaClass.simpleName
+        }
+
+    val exporter =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gzip")) { uri ->
+            val file = pending
+            pending = null
+            if (file == null) return@rememberLauncherForActivityResult
+            if (uri == null) {
+                file.delete()
+                return@rememberLauncherForActivityResult
+            }
+            scope.launch {
+                val written =
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            context.contentResolver.openOutputStream(uri)?.use { out ->
+                                file.inputStream().use { it.copyTo(out) }
+                            } ?: throw IllegalStateException("无法打开所选文件")
+                        }.isSuccess
+                    }
+                file.delete()
+                notice = if (written) savedTitle to savedMessage else failTitle to exportFailed
+            }
+        }
+
+    fun exportLog() {
+        if (collecting) return
+        scope.launch {
+            collecting = true
+            try {
+                val file = Bugreport.build(context)
+                pending = file
+                exporter.launch(file.name)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                notice = failTitle to errorText(e)
+            } finally {
+                collecting = false
+            }
+        }
+    }
+
+    fun shareLog() {
+        if (collecting) return
+        scope.launch {
+            collecting = true
+            try {
+                val file = Bugreport.build(context)
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                val send =
+                    Intent(Intent.ACTION_SEND).apply {
+                        type = "application/gzip"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                context.startActivity(Intent.createChooser(send, sendLabel))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                notice = failTitle to errorText(e)
+            } finally {
+                collecting = false
+            }
+        }
+    }
 
     MochiLazyLargeTitleScaffold(
         title = stringResource(R.string.settings),
@@ -161,13 +271,15 @@ fun SettingsScreen(
             MochiListSection {
                 MochiListRow(
                     stringResource(R.string.save_log),
+                    subtitle = stringResource(R.string.save_log_summary),
                     leading = { KsuTile("save") },
-                    onClick = {},
+                    onClick = ::exportLog,
                 )
                 MochiListRow(
                     stringResource(R.string.send_log),
+                    subtitle = stringResource(R.string.send_log_summary),
                     leading = { KsuTile("share") },
-                    onClick = {},
+                    onClick = ::shareLog,
                 )
                 MochiListRow(
                     stringResource(R.string.about),
@@ -178,5 +290,30 @@ fun SettingsScreen(
             }
         }
         item(key = "credit") { MochiCredit(stringResource(R.string.mochi_credit)) }
+    }
+
+    MochiDialog(
+        visible = collecting,
+        onDismissRequest = {},
+        title = stringResource(R.string.log_collecting_title),
+        message = stringResource(R.string.log_collecting_message),
+        icon = { CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(28.dp)) },
+        actions = persistentListOf(),
+    )
+    notice?.let { (title, message) ->
+        MochiDialog(
+            visible = true,
+            onDismissRequest = { notice = null },
+            title = title,
+            message = message,
+            actions =
+                persistentListOf(
+                    MochiDialogAction(
+                        stringResource(android.R.string.ok),
+                        MochiDialogActionRole.Primary,
+                        onClick = { notice = null },
+                    ),
+                ),
+        )
     }
 }
