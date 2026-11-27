@@ -26,8 +26,40 @@ android {
         }
     }
 
+    // release 签名材料不写进版本库：CI 用环境变量（GitHub Actions secrets），
+    // 本地开发用 local.properties 的同名属性。两者都缺时 release 构建会明确失败，
+    // 不会悄悄产出一个未签名、装不上（或与内核验签不匹配）的包。
+    signingConfigs {
+        create("release") {
+            val keystore =
+                System.getenv("NEKOSU_KEYSTORE_FILE")
+                    ?: providers.gradleProperty("nekosu.keystoreFile").orNull
+            val storePass =
+                System.getenv("NEKOSU_KEYSTORE_PASSWORD")
+                    ?: providers.gradleProperty("nekosu.keystorePassword").orNull
+            val alias =
+                System.getenv("NEKOSU_KEY_ALIAS")
+                    ?: providers.gradleProperty("nekosu.keyAlias").orNull
+            val keyPass =
+                System.getenv("NEKOSU_KEY_PASSWORD")
+                    ?: providers.gradleProperty("nekosu.keyPassword").orNull
+            if (keystore != null && storePass != null && alias != null && keyPass != null) {
+                storeFile = file(keystore)
+                storePassword = storePass
+                keyAlias = alias
+                keyPassword = keyPass
+                // 与内核验签对齐：V1/V2/V3 全开，keepDebugSymbols 保证 ncore 不被二次 strip
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // release 必须签名；缺材料时让 AGP 报「未配置签名」而不是产出废包。
+            signingConfig = signingConfigs.getByName("release")
             // R8：压缩类名 + 裁剪未用代码与资源。material-icons-extended 体积很大，
             // 开启后只保留真正引用的图标，release 包从 14 MB 降到 1.8 MB 左右。
             isMinifyEnabled = true
@@ -70,11 +102,15 @@ kotlin {
     jvmToolchain(17)
 }
 
-// 仅用于本地 Robolectric 渲染验证：mochi-compose 依赖的 com.kyant:capsule 是 Java 21 字节码，
-// 测试 JVM 需要 21 才能加载（编译产物仍为 Java 17，Android 侧由 D8 处理）。
+// Robolectric 渲染验证需要 Java 21 才能加载 mochi-compose 依赖的 com.kyant:capsule
+// （编译产物仍是 Java 17，Android 侧由 D8 处理）。本地用固定的 JDK 21 路径，
+// CI 用 NEKOSU_TEST_JAVA_HOME 指向 setup-java 装好的 21。
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
-    val jdk21 = file("/opt/jdk-21.0.13.1+2/bin/java")
-    if (jdk21.exists()) executable = jdk21.absolutePath
+    val candidate =
+        System.getenv("NEKOSU_TEST_JAVA_HOME")
+            ?: "/opt/jdk-21.0.13.1+2"
+    val java = file("$candidate/bin/java")
+    if (java.exists()) executable = java.absolutePath
     maxHeapSize = "2g"
 }
 
