@@ -34,6 +34,14 @@
     <string name="module">模块</string>
     <string name="settings">设置</string>
     <string name="install">安装</string>
+    <string name="module_install">安装模块</string>
+    <string name="module_install_title">安装模块</string>
+    <string name="module_install_action">安装</string>
+    <string name="module_installing">正在安装</string>
+    <string name="module_installing_progress">%1$s（%2$d/%3$d）</string>
+    <string name="module_install_done">安装完成</string>
+    <string name="module_install_result">安装结果</string>
+    <string name="module_install_success">成功安装 %1$d 个模块</string>
     <string name="action">执行</string>
     <string name="open">打开</string>
     <string name="uninstall">卸载</string>

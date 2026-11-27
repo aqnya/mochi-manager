@@ -1,5 +1,9 @@
 package com.nekosu.manager.ui.module
 
+import android.app.Activity
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -34,9 +39,15 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nekosu.manager.R
+import com.nekosu.manager.data.LocalModuleImport
 import com.nekosu.manager.data.ModuleEntry
 import com.nekosu.manager.data.ModuleStore
+import com.nekosu.manager.data.StagedModule
+import com.nekosu.manager.data.registry.InstallOutcome
+import com.nekosu.manager.data.registry.ModuleInstaller
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import ui.feice.mochi.basic.MochiBarGroup
 import ui.feice.mochi.basic.MochiBarGroupDropdownItem
@@ -44,6 +55,9 @@ import ui.feice.mochi.basic.MochiBarGroupItem
 import ui.feice.mochi.basic.MochiButton
 import ui.feice.mochi.basic.MochiButtonDefaults
 import ui.feice.mochi.basic.MochiButtonStyle
+import ui.feice.mochi.basic.MochiDialog
+import ui.feice.mochi.basic.MochiDialogAction
+import ui.feice.mochi.basic.MochiDialogActionRole
 import ui.feice.mochi.basic.MochiEmptyState
 import ui.feice.mochi.basic.MochiItem
 import ui.feice.mochi.basic.MochiSearchBar
@@ -93,7 +107,65 @@ fun ModuleScreen(
     // 模块列表来自 ncore（真实的 /data/adb/modules），不再有本地假数据
     LaunchedEffect(refreshKey) { loadModules() }
 
+    val context = LocalContext.current
+    var importPhase by remember { mutableStateOf<ImportPhase>(ImportPhase.Idle) }
+
+    // 逐个安装：ncore 一次只处理一个包，串行也方便把失败原因按文件分开
+    suspend fun runImport(items: List<StagedModule>) {
+        var ok = 0
+        val failures = mutableListOf<String>()
+        items.forEachIndexed { index, item ->
+            importPhase = ImportPhase.Running(items, index)
+            val outcome =
+                try {
+                    ModuleInstaller.install(item.file)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    InstallOutcome.Failure(e.message ?: "安装失败")
+                }
+            when (outcome) {
+                is InstallOutcome.Success -> ok++
+                is InstallOutcome.Failure -> failures += "${item.displayName}：${outcome.message}"
+            }
+        }
+        importPhase = ImportPhase.Done(ok, failures)
+        // 装完立刻重读 /data/adb/modules，不用等用户手动下拉
+        if (ok > 0) refreshKey++
+    }
+
+    // 和 KernelSU 的入口一致：ACTION_GET_CONTENT + application/zip + 多选
+    val pickZip =
+        rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
+            val data = result.data ?: return@rememberLauncherForActivityResult
+            val uris =
+                buildList {
+                    val clip = data.clipData
+                    if (clip != null) {
+                        for (i in 0 until clip.itemCount) clip.getItemAt(i)?.uri?.let(::add)
+                    } else {
+                        data.data?.let(::add)
+                    }
+                }
+            if (uris.isEmpty()) return@rememberLauncherForActivityResult
+            scope.launch {
+                val staged =
+                    try {
+                        LocalModuleImport.stageAll(context, uris)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        importPhase = ImportPhase.Done(0, listOf(e.message ?: "读不到所选文件"))
+                        return@launch
+                    }
+                // 单个包直接装；多个先列出来确认，和 PR 里的交互一致
+                if (staged.size == 1) runImport(staged) else importPhase = ImportPhase.Confirm(staged)
+            }
+        }
+
     val searching = query.isNotBlank()
+    val installLabel = stringResource(R.string.module_install)
     // 这里不能用 remember(query, …) 包住：modules 是 SnapshotStateList，不在 key 里，
     // 首次组合时列表还是空的，缓存会一直返回那份空结果，加载完成后界面仍然是空态。
     val visible =
@@ -120,9 +192,19 @@ fun ModuleScreen(
                 MochiBarGroupItem(onClick = onOpenRepo, navId = "module.repo", contentKey = "storefront") {
                     MochiIonicon("storefront")
                 }
-                MochiBarGroupItem(onClick = {}, navId = "module.install", contentKey = "add") {
-                    MochiIonicon("add")
-                }
+                MochiBarGroupItem(
+                    onClick = {
+                        pickZip.launch(
+                            Intent(Intent.ACTION_GET_CONTENT).apply {
+                                type = "application/zip"
+                                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                            },
+                        )
+                    },
+                    modifier = Modifier.semantics { contentDescription = installLabel },
+                    navId = "module.install",
+                    contentKey = "add",
+                ) { MochiIonicon("add") }
                 MochiBarGroupDropdownItem(
                     expanded = menu,
                     onExpandedChange = { menu = it },
@@ -206,6 +288,104 @@ fun ModuleScreen(
             }
         }
     }
+
+    ImportDialogs(
+        phase = importPhase,
+        onDismiss = { importPhase = ImportPhase.Idle },
+        onConfirm = { items -> scope.launch { runImport(items) } },
+    )
+}
+
+/** 本地 ZIP 安装的三种对话框：多选确认、安装中、结果。 */
+@Composable
+private fun ImportDialogs(
+    phase: ImportPhase,
+    onDismiss: () -> Unit,
+    onConfirm: (List<StagedModule>) -> Unit,
+) {
+    val icon: @Composable () -> Unit = { MochiIonicon("extension-puzzle", size = 44.dp) }
+    when (phase) {
+        ImportPhase.Idle -> Unit
+
+        is ImportPhase.Confirm ->
+            MochiDialog(
+                visible = true,
+                onDismissRequest = onDismiss,
+                title = stringResource(R.string.module_install_title),
+                message = phase.items.joinToString("\n") { "• ${it.displayName}（${formatSize(it.size)}）" },
+                icon = icon,
+                actions =
+                    persistentListOf(
+                        MochiDialogAction(stringResource(android.R.string.cancel), MochiDialogActionRole.Cancel),
+                        MochiDialogAction(
+                            stringResource(R.string.module_install_action),
+                            MochiDialogActionRole.Primary,
+                            onClick = { onConfirm(phase.items) },
+                        ),
+                    ),
+            )
+
+        is ImportPhase.Running ->
+            MochiDialog(
+                visible = true,
+                // 安装中不允许关掉，避免用户误以为已经取消
+                onDismissRequest = {},
+                title = stringResource(R.string.module_installing),
+                message =
+                    stringResource(
+                        R.string.module_installing_progress,
+                        phase.items[phase.index].displayName,
+                        phase.index + 1,
+                        phase.items.size,
+                    ),
+                icon = icon,
+                actions = persistentListOf(),
+            )
+
+        is ImportPhase.Done -> {
+            val successText = if (phase.success > 0) stringResource(R.string.module_install_success, phase.success) else ""
+            val message =
+                listOf(successText, phase.failures.joinToString("\n"))
+                    .filter { it.isNotBlank() }
+                    .joinToString("\n")
+            MochiDialog(
+                visible = true,
+                onDismissRequest = onDismiss,
+                title = stringResource(if (phase.failures.isEmpty()) R.string.module_install_done else R.string.module_install_result),
+                message = message,
+                icon = {
+                    MochiIonicon(
+                        if (phase.failures.isEmpty()) "checkmark-circle" else "alert-circle",
+                        size = 44.dp,
+                    )
+                },
+                actions =
+                    persistentListOf(
+                        MochiDialogAction(stringResource(android.R.string.ok), MochiDialogActionRole.Primary, onClick = onDismiss),
+                    ),
+            )
+        }
+    }
+}
+
+/** 加号入口的状态机。 */
+private sealed interface ImportPhase {
+    data object Idle : ImportPhase
+
+    /** 多选时先列文件确认；单个包跳过这一步。 */
+    data class Confirm(
+        val items: List<StagedModule>,
+    ) : ImportPhase
+
+    data class Running(
+        val items: List<StagedModule>,
+        val index: Int,
+    ) : ImportPhase
+
+    data class Done(
+        val success: Int,
+        val failures: List<String>,
+    ) : ImportPhase
 }
 
 @OptIn(ExperimentalLayoutApi::class)

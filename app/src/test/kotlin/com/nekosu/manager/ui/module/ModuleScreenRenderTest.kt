@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -88,6 +89,8 @@ class ModuleScreenRenderTest {
         compose.onNodeWithText("LSPosed").assertExists()
         compose.onNodeWithText("ART hook framework，作用于 zygote").assertExists()
         compose.onNodeWithText("BusyBox").assertExists()
+        // 右上角的加号必须是可用的安装入口，不是空壳
+        compose.onNodeWithContentDescription("安装模块").assertExists()
         // 原来的缓存 bug 会一直停在这里
         compose
             .onNodeWithText(ApplicationProvider.getApplicationContext<android.content.Context>().getString(R.string.module_empty))

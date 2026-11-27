@@ -141,11 +141,12 @@ ncore 的 boot 阶段，用编译期指纹，和上面的镜像验签是两回�
 - 包名 `com.nekosu.manager`，应用名 `NekoSU`，minSdk 24 / targetSdk 37。
 - 超级用户页的应用列表来自真实 PackageManager（见 data/InstalledApps.kt）；
   授权是本地 SharedPreferences 记录，没有写进 KernelSU 白名单。
-- 首页设备信息为真实采集（见下文）；模块列表仍是静态模拟，设置页开关只改本地状态。
+- 首页设备信息为真实采集（见下文）；模块列表来自 `/data/adb/modules`，启停/卸载写回磁盘，设置页开关只改本地状态。
 - 共享 uid 的应用合并为一行，配置按 uid 存取，组内所有包共用（见下文）；
 - 应用配置页已移植（点击超级用户列表任意一行进入）。
 - 模块页右上角的商店按钮进入**真实模块仓库**（`modules.kernelsu.org`），可搜索、按更新时间 / 名称 / 星标排序、
-  看详情并从 GitHub Release 下载安装；已安装模块列表本身仍是静态模拟，安装/刷写、Sulog、关于、WebUI 尚未移植。
+  看详情并从 GitHub Release 下载安装；加号是**本地 ZIP 安装**入口（`ACTION_GET_CONTENT`，支持多选，参考
+  KernelSU 的交互：单个直接装、多个先列文件确认）。已安装列表来自 ncore，WebUI / Sulog / 关于页尚未移植。
 - 设置页的「保存日志 / 发送日志」已接真实实现（见下文），不再是无动作的空行。
 - 二级页面用 `MochiNavHost`：iOS 侧推转场 + 跟手侧滑返回（预测性返回），路由在 `ui/superuser/SuperUserFlow.kt`。
 - 设置 → 主题是真实页面：玻璃开关切换 `MochiTheme` 的 materials（tab bar、顶栏按钮、菜单、弹窗
@@ -227,11 +228,15 @@ KernelSU 的 su 白名单与 profile 都以 **uid** 为粒度，所以列表不�
 | 图标 | 相对路径拼站点域名，按 URL 落盘 + 12 MB 位图 LRU，列表滚动不重复解码 |
 | 下载 | 只接受 `https://github.com/<owner>/<repo>/releases/download/...`，非 GitHub 主机、带 query、带 userinfo 一律丢弃 |
 | 校验 | 下载后核对 Release 记录的字节数与 SHA-256，不一致删除临时文件并报错，绝不交给 `ksud` |
-| 安装 | `su -c ksud module install <path>`，依次尝试 `/data/adb/ksud` 与 PATH 里的 `ksud`；拿不到 root、找不到 ksud、返回码非 0 都给可读原因，不会假装成功 |
+| 安装 | 优先 `ncore module install <path>`；没有 ncore 时退回 `su -c ksud module install <path>`（依次试 `/data/adb/ksud` 与 PATH）。拿不到 root、返回码非 0 都给可读原因，不会假装成功 |
 | 脚本条目 | `kind: script` 只展示、跳网页运行，不提供安装按钮 |
 | 刷新 | 与超级用户页同一套 `runRefresh`：最短 350ms、上限 30s（要联网，比读本地列表放宽），取消能向上传播 |
 
 下载的 ZIP 放在 `cacheDir/module_downloads`，按 SHA-256 命名，重复安装同一版本直接复用。
+
+本地 ZIP 安装走同一个 `ModuleInstaller`：SAF 返回的 `content://` 先由 `LocalModuleImport.stageAll()`
+复制到 `cacheDir/module_import` 并校验 ZIP 魔数（512 MB 上限），再把真实路径交给 ncore/ksud——
+root shell 读不了文档提供者的 fd，必须落盘。
 
 清单必须声明 `android.permission.INTERNET`（没有它 `HttpURLConnection` 直接抛 `SecurityException`，
 界面只会显示「加载模块仓库失败」，很难看出是权限问题）；`ManifestPermissionsTest` 盯着这条。
