@@ -39,12 +39,12 @@ app/src/main/kotlin/com/nekosu/manager/
 ├── neko/NekoKernel.kt       内核查询：版本、授权表、特性位
 ├── neko/Ncore.kt            ncore 部署与 CLI（模块安装/启停/卸载/action）
 ├── data/Bugreport.kt        日志收集：脚本、设备信息、tar.gz 打包
-├── ui/MochiRoot.kt          底部四 Tab 容器
+├── ui/MochiRoot.kt          根导航：标签骨架（底部四 Tab）+ 二级页都挂在这条栈上
 ├── ui/home/                 首页
 ├── ui/superuser/            超级用户（真实应用列表）
 ├── ui/profile/              应用配置页（是否放行 / uid / gid / 附加组 / 能力位 / SELinux）
-├── ui/module/               模块（已安装列表 + ModuleFlow → 模块仓库 → 仓库详情）
-├── ui/settings/             设置（SettingsFlow → 主题设置 ThemeScreen）
+├── ui/module/               模块（已安装列表 → 模块仓库 → 仓库详情 / 安装输出页）
+├── ui/settings/             设置 → 主题设置 ThemeScreen
 ├── ui/mochi/Bits.kt         图标色块 / 开关行 / 应用图标占位
 └── ui/theme/                Mochi 配色、字体、主题入口
 ```
@@ -148,7 +148,10 @@ ncore 的 boot 阶段，用编译期指纹，和上面的镜像验签是两回�
   看详情并从 GitHub Release 下载安装；加号是**本地 ZIP 安装**入口（`ACTION_GET_CONTENT`，支持多选，参考
   KernelSU 的交互：单个直接装、多个先列文件确认）。已安装列表来自 ncore，WebUI / Sulog / 关于页尚未移植。
 - 设置页的「保存日志 / 发送日志」已接真实实现（见下文），不再是无动作的空行。
-- 二级页面用 `MochiNavHost`：iOS 侧推转场 + 跟手侧滑返回（预测性返回），路由在 `ui/superuser/SuperUserFlow.kt`。
+- 二级页面用根级 `MochiNavHost`（`ui/MochiRoot.kt`）：标签骨架是它的根页，配置页 / 模块仓库 / 仓库详情 /
+  安装页 / 主题页都推到同一个栈上。所以推入二级页时整页连同底部标签栏一起往左退、被新页盖住，
+  二级页里不会再出现标签栏；返回手势同时把这一页推回去（iOS 的 `hidesBottomBarWhenPushed`）。
+  标签页自己的滚动位置照旧保留（栈顶下面那页保持组合）。
 - 设置 → 主题是真实页面：玻璃开关切换 `MochiTheme` 的 materials（tab bar、顶栏按钮、菜单、弹窗
   一起换），值存在 `settings` 偏好里，重启保留；开启后同组多出「玻璃样式」，按 mochi demo 的
   「材质 → 玻璃样式」分档，可选 **标准**（`MochiGlassDefaults.Regular`，更透、折射更明显）和
