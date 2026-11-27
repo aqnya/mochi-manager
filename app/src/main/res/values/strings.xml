@@ -48,7 +48,7 @@
     <string name="log_continue">继续导出</string>
     <string name="log_saved_no_root">已保存到「%1$s」。报告里没有 dmesg 与 /data/adb，缺了哪些见包里的 missing.txt。</string>
     <string name="log_need_root">root 授权被拒绝，且无法以应用身份启动收集脚本。</string>
-    <string name="log_export_failed">写入下载目录失败，检查存储空间后重试。</string>
+    <string name="log_export_failed">写入下载目录失败：%1$s</string>
     <string name="cancel">取消</string>
 
     <!-- 超级用户授权 -->

@@ -1,9 +1,13 @@
 package com.nekosu.manager.data
 
+import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.util.concurrent.TimeUnit
+
+private const val TAG = "NekoSU/Shell"
 
 /** 一次 shell 执行结果。 */
 data class RootShellResult(
@@ -76,24 +80,39 @@ object RootShell {
                 } catch (e: IOException) {
                     throw RootUnavailableException("无法执行 ${argv.firstOrNull()}：${e.message}", e)
                 }
+            // 输出必须由独立线程一直读完：原来的 ready()+readLine() 在最后一行没有换行时会阻塞，
+            // 超时循环进不去，脚本又不退出，界面就永远停在「正在收集日志」。
             val output = StringBuilder()
-            val deadline = System.currentTimeMillis() + timeoutSeconds * 1000
-            process.inputStream.bufferedReader().use { reader ->
-                while (System.currentTimeMillis() < deadline) {
-                    if (reader.ready()) {
-                        val line = reader.readLine() ?: break
-                        if (output.length < MAX_OUTPUT_CHARS) output.append(line).append('\n')
-                    } else if (process.isAlive) {
-                        Thread.sleep(20)
-                    } else {
-                        break
+            val readerThread =
+                Thread({
+                    val buffer = ByteArray(8 * 1024)
+                    try {
+                        process.inputStream.use { input ->
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                if (output.length < MAX_OUTPUT_CHARS) {
+                                    output.append(String(buffer, 0, count, Charsets.UTF_8))
+                                }
+                            }
+                        }
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "读取输出失败", e)
                     }
-                }
+                }, "nekosu-shell-reader").apply { isDaemon = true }
+            readerThread.start()
+
+            val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                readerThread.join(500)
+                val cmd = argv.joinToString(" ")
+                Log.w(TAG, "命令超时 ${timeoutSeconds}s: cmd=$cmd")
+                throw ShellTimeoutException("命令超时（${timeoutSeconds}s）：${cmd.take(60)}")
             }
-            if (process.isAlive) {
-                process.destroy()
-                throw ShellTimeoutException("命令超时（${timeoutSeconds}s）：${argv.joinToString(" ").take(60)}")
-            }
-            RootShellResult(process.waitFor(), output.toString().trim())
+            readerThread.join(1_000)
+            val result = RootShellResult(process.exitValue(), output.toString().trim())
+            Log.d(TAG, "命令结束 exit=${result.exitCode} 输出=${result.output.length} 字: ${argv.joinToString(" ").take(80)}")
+            result
         }
 }

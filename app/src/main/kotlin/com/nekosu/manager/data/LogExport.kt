@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import android.os.Environment
 import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +22,7 @@ import java.io.IOException
  * 这里直接写公共下载目录的 `NekoSU/` 子目录，省掉这一步交互。
  */
 object LogExport {
+    private const val TAG = "NekoSU/LogExport"
     private const val FOLDER = "NekoSU"
     private const val MIME = "application/gzip"
 
@@ -54,13 +56,21 @@ object LogExport {
             }
         val uri =
             resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: throw IOException("无法在下载目录创建文件")
+                ?: throw IOException("无法在下载目录创建文件（MediaStore.insert 返回 null）")
+        Log.d(TAG, "MediaStore 占位记录 uri=$uri 源文件=${file.length()} 字节")
         try {
-            resolver.openOutputStream(uri)?.use { out ->
-                file.inputStream().use { it.copyTo(out) }
-            } ?: throw IOException("无法写入下载目录")
-            resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+            val written =
+                resolver.openOutputStream(uri)?.use { out ->
+                    file.inputStream().use { it.copyTo(out) }
+                } ?: throw IOException("无法写入下载目录（openOutputStream 返回 null）")
+            if (written != file.length()) {
+                throw IOException("写入不完整：源 ${file.length()} 字节，实际 $written 字节")
+            }
+            val cleared =
+                resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+            Log.d(TAG, "写入完成 $written 字节，清除 IS_PENDING 影响=$cleared uri=$uri")
         } catch (e: Throwable) {
+            Log.e(TAG, "写入下载目录失败 uri=$uri", e)
             // 写了一半就失败：删掉占位记录，别在「下载」里留个 0 字节文件
             runCatching { resolver.delete(uri, null, null) }
             throw e

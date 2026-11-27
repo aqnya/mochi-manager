@@ -1,35 +1,26 @@
 package com.nekosu.manager.ui.settings
 
-import android.content.Intent
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
 import com.nekosu.manager.R
-import com.nekosu.manager.data.Bugreport
-import com.nekosu.manager.data.BugreportException
-import com.nekosu.manager.data.LogExport
-import com.nekosu.manager.data.RootUnavailableException
-import com.nekosu.manager.data.ShellTimeoutException
+import com.nekosu.manager.data.LogAction
+import com.nekosu.manager.data.LogExportCoordinator
+import com.nekosu.manager.data.LogExportState
 import com.nekosu.manager.ui.mochi.KsuSwitchRow
 import com.nekosu.manager.ui.mochi.KsuTile
 import com.nekosu.manager.ui.mochi.KsuTileColors
 import com.nekosu.manager.ui.mochi.MochiCredit
-import java.io.File
 import kotlinx.collections.immutable.persistentListOf
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.launch
 import ui.feice.mochi.basic.MochiDialog
 import ui.feice.mochi.basic.MochiDialogAction
 import ui.feice.mochi.basic.MochiDialogActionRole
@@ -42,8 +33,12 @@ import ui.feice.mochi.navigation.MochiLazyLargeTitleScaffold
  * 设置：更新、外观、功能开关、高级选项和关于。所有开关都是本地状态，
  * 结构对齐 KernelSU Manager 的 Mochi 设置页。
  *
- * 已接真实能力：「主题」进入 [ThemeScreen]，「保存日志 / 发送日志」生成 bugreport（[Bugreport]）
+ * 已接真实能力：「主题」进入 [ThemeScreen]，「保存日志 / 发送日志」生成 bugreport（[LogExportCoordinator]）
  * 并导出或分享。其余开关仍是移植中的占位。
+ *
+ * 导出状态不在本 Composable 里 remember：Activity 在收集过程中被销毁重建时，
+ * 本地协程会连同状态一起被清掉，表现就是「点了没反应、下载目录里没有文件」。
+ * 状态机放在应用级单例里，退出应用也照样把文件写完。
  */
 @Composable
 fun SettingsScreen(
@@ -62,87 +57,7 @@ fun SettingsScreen(
     var webDebug by rememberSaveable { mutableStateOf(false) }
 
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var collecting by remember { mutableStateOf(false) }
-    var notice by remember { mutableStateOf<Pair<String, String>?>(null) }
-    // 没有 root 时先收集，再问一句要不要继续导出——不直接失败
-    var partial by remember { mutableStateOf<PartialLog?>(null) }
-
-    val failTitle = stringResource(R.string.log_failed)
-    val needRoot = stringResource(R.string.log_need_root)
-    val exportFailed = stringResource(R.string.log_export_failed)
-    val savedTitle = stringResource(R.string.log_saved)
-    val sendLabel = stringResource(R.string.send_log)
-
-    fun errorText(e: Throwable): String =
-        when (e) {
-            is RootUnavailableException -> needRoot
-            is ShellTimeoutException -> e.message ?: failTitle
-            is BugreportException -> e.message ?: failTitle
-            else -> e.message ?: e.javaClass.simpleName
-        }
-
-    fun deliver(
-        action: LogAction,
-        file: File,
-        noRoot: Boolean = false,
-    ) {
-        when (action) {
-            LogAction.Save -> {
-                scope.launch {
-                    // 直接写公共下载目录；不再走 ACTION_CREATE_DOCUMENT（HyperOS 上会立刻返回空结果）
-                    val path =
-                        runCatching { LogExport.save(context, file, file.name) }
-                            .onFailure { notice = failTitle to exportFailed }
-                            .getOrNull()
-                    file.delete()
-                    if (path != null) {
-                        notice =
-                            savedTitle to
-                                context.getString(
-                                    if (noRoot) R.string.log_saved_no_root else R.string.log_saved_message,
-                                    path,
-                                )
-                    }
-                }
-            }
-
-            LogAction.Share -> {
-                runCatching {
-                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                    val send =
-                        Intent(Intent.ACTION_SEND).apply {
-                            type = "application/gzip"
-                            putExtra(Intent.EXTRA_STREAM, uri)
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                    context.startActivity(Intent.createChooser(send, sendLabel))
-                }.onFailure { notice = failTitle to errorText(it) }
-            }
-        }
-    }
-
-    fun collect(action: LogAction) {
-        if (collecting) return
-        scope.launch {
-            collecting = true
-            try {
-                val result = Bugreport.build(context)
-                if (result.rooted) {
-                    deliver(action, result.file)
-                } else {
-                    // 没 root 也能拿到设备信息与自身日志；先让用户知道缺了什么再决定是否继续
-                    partial = PartialLog(result.file, action, result.missing.size)
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                notice = failTitle to errorText(e)
-            } finally {
-                collecting = false
-            }
-        }
-    }
+    val exportState = LogExportCoordinator.state
 
     MochiLazyLargeTitleScaffold(
         title = stringResource(R.string.settings),
@@ -266,13 +181,13 @@ fun SettingsScreen(
                     stringResource(R.string.save_log),
                     subtitle = stringResource(R.string.save_log_summary),
                     leading = { KsuTile("save") },
-                    onClick = { collect(LogAction.Save) },
+                    onClick = { LogExportCoordinator.start(context, LogAction.Save) },
                 )
                 MochiListRow(
                     stringResource(R.string.send_log),
                     subtitle = stringResource(R.string.send_log_summary),
                     leading = { KsuTile("share") },
-                    onClick = { collect(LogAction.Share) },
+                    onClick = { LogExportCoordinator.start(context, LogAction.Share) },
                 )
                 MochiListRow(
                     stringResource(R.string.about),
@@ -286,20 +201,17 @@ fun SettingsScreen(
     }
 
     MochiDialog(
-        visible = collecting,
+        visible = exportState is LogExportState.Collecting,
         onDismissRequest = {},
         title = stringResource(R.string.log_collecting_title),
         message = stringResource(R.string.log_collecting_message),
         icon = { CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(28.dp)) },
         actions = persistentListOf(),
     )
-    partial?.let { log ->
+    (exportState as? LogExportState.ConfirmPartial)?.let { log ->
         MochiDialog(
             visible = true,
-            onDismissRequest = {
-                log.file.delete()
-                partial = null
-            },
+            onDismissRequest = { LogExportCoordinator.dismiss() },
             title = stringResource(R.string.log_no_root_title),
             message = stringResource(R.string.log_no_root_message, log.missing),
             icon = { KsuTile("shield", KsuTileColors.Gray) },
@@ -308,46 +220,30 @@ fun SettingsScreen(
                     MochiDialogAction(
                         stringResource(android.R.string.cancel),
                         MochiDialogActionRole.Cancel,
-                        onClick = {
-                            log.file.delete()
-                            partial = null
-                        },
+                        onClick = { LogExportCoordinator.dismiss() },
                     ),
                     MochiDialogAction(
                         stringResource(R.string.log_continue),
                         MochiDialogActionRole.Primary,
-                        onClick = {
-                            partial = null
-                            deliver(log.action, log.file, noRoot = true)
-                        },
+                        onClick = { LogExportCoordinator.confirm(context) },
                     ),
                 ),
         )
     }
-    notice?.let { (title, message) ->
+    (exportState as? LogExportState.Notice)?.let { notice ->
         MochiDialog(
             visible = true,
-            onDismissRequest = { notice = null },
-            title = title,
-            message = message,
+            onDismissRequest = { LogExportCoordinator.dismiss() },
+            title = notice.title,
+            message = notice.message,
             actions =
                 persistentListOf(
                     MochiDialogAction(
                         stringResource(android.R.string.ok),
                         MochiDialogActionRole.Primary,
-                        onClick = { notice = null },
+                        onClick = { LogExportCoordinator.dismiss() },
                     ),
                 ),
         )
     }
 }
-
-/** 日志条目的两种去向。 */
-private enum class LogAction { Save, Share }
-
-/** 无 root 时收集好的报告，等用户确认后再导出/分享。 */
-private class PartialLog(
-    val file: File,
-    val action: LogAction,
-    val missing: Int,
-)

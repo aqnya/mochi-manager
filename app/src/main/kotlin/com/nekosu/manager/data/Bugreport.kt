@@ -2,6 +2,7 @@ package com.nekosu.manager.data
 
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -38,8 +39,11 @@ data class BugreportResult(
  * 能读到的照旧收集，读不到的记进 `missing.txt`，不再整份失败。
  */
 object Bugreport {
+    private const val TAG = "NekoSU/Bugreport"
     private const val COLLECT_TIMEOUT_SECONDS = 150L
-    private const val LOCAL_TIMEOUT_SECONDS = 60L
+    // 无 root 时很多命令会失败/重试（logcat 只返回本应用、tar 访问特权目录被拒），
+    // 比 root 路径慢得多；60s 在 HyperOS 上不够，会误判成「收集失败」。
+    private const val LOCAL_TIMEOUT_SECONDS = 150L
     private const val PACK_TIMEOUT_SECONDS = 120L
 
     suspend fun build(context: Context): BugreportResult =
@@ -51,12 +55,14 @@ object Bugreport {
             val script = File(dir, "collect.sh").apply { writeText(collectScript(dir)) }
             // 探测本身会弹 KernelSU 授权框；被拒绝/超时/没装 su 都按「无 root」处理，继续往下收集
             val rooted = RootShell.isRootAvailable()
+            Log.d(TAG, "开始收集 rooted=$rooted dir=${dir.absolutePath}")
             val collected =
                 if (rooted) {
                     RootShell.exec("sh ${quote(script.absolutePath)}", COLLECT_TIMEOUT_SECONDS)
                 } else {
                     RootShell.execAsUser("sh ${quote(script.absolutePath)}", LOCAL_TIMEOUT_SECONDS)
                 }
+            Log.d(TAG, "收集结束 exit=${collected.exitCode} 输出=${collected.output.length} 字")
             if (collected.exitCode != 0) {
                 throw BugreportException(
                     collected.output.ifBlank { "收集脚本退出码 ${collected.exitCode}" },
@@ -80,6 +86,7 @@ object Bugreport {
                 } else {
                     RootShell.execAsUser(packCommand, PACK_TIMEOUT_SECONDS)
                 }
+            Log.d(TAG, "打包结束 exit=${packed.exitCode} 文件=${target.isFile} 大小=${if (target.isFile) target.length() else -1}")
             if (packed.exitCode != 0 || !target.isFile || target.length() == 0L) {
                 target.delete()
                 throw BugreportException(packed.output.ifBlank { "打包失败，退出码 ${packed.exitCode}" })
