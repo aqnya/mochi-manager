@@ -120,6 +120,10 @@ class ScreenRenderTest {
             compose.waitForIdle()
             Thread.sleep(50)
         }
+        snap(name)
+    }
+
+    private fun snap(name: String) {
         compose.waitForIdle()
         val view = compose.activity.window.decorView
         if (view.width <= 0 || view.height <= 0) return
@@ -145,6 +149,8 @@ class ScreenRenderTest {
         compose.onNodeWithText("重启到 Bootloader").assertExists()
         compose.onNodeWithText("重启到 EDL 模式").assertExists()
         compose.onNodeWithText("用户空间重启").assertDoesNotExist()
+        // mochi 菜单是挂在 DecorView 上的浮层，直接画整棵 view 树才能拿到展开态
+        snap("home-reboot-menu")
     }
 
     @Test

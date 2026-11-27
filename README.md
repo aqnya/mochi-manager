@@ -148,7 +148,8 @@ ncore 的 boot 阶段，用编译期指纹，和上面的镜像验签是两回�
   看详情并从 GitHub Release 下载安装；加号是**本地 ZIP 安装**入口（`ACTION_GET_CONTENT`，支持多选，参考
   KernelSU 的交互：单个直接装、多个先列文件确认）。已安装列表来自 ncore，WebUI / Sulog / 关于页尚未移植。
 - 设置页的「保存日志 / 发送日志」已接真实实现（见下文），不再是无动作的空行。
-- 首页右上角的电源按钮接入了**重启菜单**（参照上游 KernelSU 的 `RebootListPopup`）：
+- 首页右上角的电源按钮接入了**重启菜单**，用 mochi 的 `MochiBarIconDropdown`（顶栏图标按钮同款材质、融球 /
+  果冻 / 按住滑选，保留 navId 跨页共享转场），菜单项参照上游 KernelSU 的 `RebootListPopup`：
   普通重启 / 用户空间重启 / Recovery / Bootloader / EDL。「用户空间重启」按
   `PowerManager.isRebootingUserspaceSupported` 过滤，不支持的设备不显示；
   执行走 root shell 的 `svc power reboot $reason || /system/bin/reboot $reason` 双保险，
