@@ -72,7 +72,10 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    LaunchedEffect(Unit) { SuProfileStore.init(context) }
+    LaunchedEffect(Unit) {
+        SuProfileStore.init(context)
+        SuProfileStore.refreshFromKernel(context)
+    }
     val profiles by SuProfileStore.profiles.collectAsState()
     // 启动时已预热；缓存缺失（进程被回收后重建）就同步取一次，保证首帧完整
     val device = remember { DeviceInfoRepository.current() ?: DeviceInfoRepository.loadNow(context) }

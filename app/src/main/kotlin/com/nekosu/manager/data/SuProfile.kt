@@ -3,8 +3,13 @@ package com.nekosu.manager.data
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import com.nekosu.manager.neko.NekoKernel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -73,19 +78,33 @@ val SuGroups =
 data class SuCapability(
     val name: String,
     val desc: String,
+    /** Linux capability 编号；内核 profile 的 caps 就是 `1L shl bit` 的按位或。 */
+    val bit: Int,
 )
 
 val SuCapabilities =
     listOf(
-        SuCapability("CAP_DAC_OVERRIDE", "绕过文件读写权限检查"),
-        SuCapability("CAP_DAC_READ_SEARCH", "绕过文件与目录的读权限检查"),
-        SuCapability("CAP_SYS_ADMIN", "系统管理（挂载、命名空间等）"),
-        SuCapability("CAP_SYS_PTRACE", "调试与读写其他进程内存"),
-        SuCapability("CAP_NET_ADMIN", "网络接口与路由配置"),
-        SuCapability("CAP_NET_RAW", "原始套接字"),
-        SuCapability("CAP_SETUID", "切换用户 ID"),
-        SuCapability("CAP_SETGID", "切换用户组 ID"),
+        SuCapability("CAP_DAC_OVERRIDE", "绕过文件读写权限检查", 1),
+        SuCapability("CAP_DAC_READ_SEARCH", "绕过文件与目录的读权限检查", 2),
+        SuCapability("CAP_SYS_ADMIN", "系统管理（挂载、命名空间等）", 21),
+        SuCapability("CAP_SYS_PTRACE", "调试与读写其他进程内存", 19),
+        SuCapability("CAP_NET_ADMIN", "网络接口与路由配置", 12),
+        SuCapability("CAP_NET_RAW", "原始套接字", 13),
+        SuCapability("CAP_SETUID", "切换用户 ID", 7),
+        SuCapability("CAP_SETGID", "切换用户组 ID", 6),
     )
+
+/** 能力名集合 → 内核 caps 位（未知名字忽略）。 */
+fun capsMask(names: Set<String>): Long =
+    names.fold(0L) { mask, name ->
+        val bit = SuCapabilities.firstOrNull { it.name == name }?.bit
+        if (bit == null) mask else mask or (1L shl bit)
+    }
+
+/** 内核 caps 位 → 能力名集合（只保留界面能展示的那几位）。 */
+fun capsFromMask(mask: Long): Set<String> =
+    SuCapabilities.filterTo(mutableSetOf()) { mask and (1L shl it.bit) != 0L }.map { it.name }.toSet()
+
 
 /**
  * 配置的本地存储，按 **应用 uid** 索引。
@@ -101,6 +120,9 @@ object SuProfileStore {
     private val _profiles = MutableStateFlow<Map<Int, SuProfile>>(emptyMap())
     val profiles: StateFlow<Map<Int, SuProfile>> = _profiles
 
+    /** 写内核是 IO 操作，不挂在界面协程上（页面退出也要写完）。 */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     fun init(context: Context) {
         if (prefs != null) return
         val p = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -108,6 +130,41 @@ object SuProfileStore {
         val (loaded, migrated) = decode(p.getString(KEY_PROFILES, null), context.packageManager)
         _profiles.value = loaded
         if (migrated) p.edit().putString(KEY_PROFILES, encode(loaded)).apply()
+    }
+
+    /**
+     * 用内核 profile 表覆盖授权状态。
+     *
+     * 内核是唯一事实来源：表里有这个 uid 才算授权，能力位/命名空间/域也从这里读。
+     * 没有 NekoSU 内核模块时直接返回，保留本地数据（纯本地预览）。
+     */
+    suspend fun refreshFromKernel(context: Context) {
+        init(context)
+        val kernel = NekoKernel.profiles() ?: return
+        val pm = context.packageManager
+        val next = _profiles.value.toMutableMap()
+        val allowed = kernel.mapTo(mutableSetOf()) { it.uid }
+
+        next.replaceAll { _, profile ->
+            if (profile.appUid in allowed) profile else profile.copy(allowSu = false)
+        }
+        for (entry in kernel) {
+            val existing = next[entry.uid]
+            val pkg =
+                existing?.packageName?.takeIf { it.isNotBlank() }
+                    ?: runCatching { pm.getPackagesForUid(entry.uid)?.firstOrNull() }.getOrNull()
+                    ?: "uid ${entry.uid}"
+            next[entry.uid] =
+                (existing ?: SuProfile(pkg, entry.uid)).copy(
+                    packageName = pkg,
+                    allowSu = true,
+                    capabilities = capsFromMask(entry.caps),
+                    namespace = entry.namespace,
+                    context = entry.domain,
+                )
+        }
+        _profiles.value = next
+        persist(next)
     }
 
     fun get(
@@ -125,7 +182,8 @@ object SuProfileStore {
         init(context)
         val next = _profiles.value.toMutableMap().apply { put(profile.appUid, profile) }
         _profiles.value = next
-        prefs?.edit()?.putString(KEY_PROFILES, encode(next))?.apply()
+        persist(next)
+        writeKernel(profile)
     }
 
     fun reset(
@@ -135,7 +193,33 @@ object SuProfileStore {
         init(context)
         val next = _profiles.value.toMutableMap().apply { remove(uid) }
         _profiles.value = next
-        prefs?.edit()?.putString(KEY_PROFILES, encode(next))?.apply()
+        persist(next)
+        revokeKernel(uid)
+    }
+
+    private fun persist(profiles: Map<Int, SuProfile>) {
+        prefs?.edit()?.putString(KEY_PROFILES, encode(profiles))?.apply()
+    }
+
+    /** 授权开关 + profile 一起写。内核不可用时什么也不做。 */
+    private fun writeKernel(profile: SuProfile) {
+        if (!NekoKernel.available) return
+        scope.launch {
+            val ok = NekoKernel.setAllowed(profile.appUid, profile.allowSu)
+            if (!ok || !profile.allowSu) return@launch
+            NekoKernel.setProfile(
+                uid = profile.appUid,
+                caps = capsMask(profile.capabilities),
+                domain = profile.context,
+                namespace = profile.namespace,
+                rootUid = profile.runAsUid,
+            )
+        }
+    }
+
+    private fun revokeKernel(uid: Int) {
+        if (!NekoKernel.available) return
+        scope.launch { NekoKernel.setAllowed(uid, false) }
     }
 
     private fun encode(profiles: Map<Int, SuProfile>): String =

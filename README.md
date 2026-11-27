@@ -28,12 +28,16 @@ app/src/main/kotlin/com/nekosu/manager/
 ├── MainActivity.kt          入口，套 NekoSUTheme + MochiRoot
 ├── data/InstalledApps.kt    真实应用列表（PackageManager）+ 图标缓存
 ├── data/AppGroups.kt        按 uid 归并应用（共享 uid 组、代表应用、属主名）
-├── data/SuProfile.kt        按 uid 的超级用户配置（本地 JSON 存储，含旧包名数据迁移）
+├── data/SuProfile.kt        按 uid 的超级用户配置（内核 profile 为准，本地 JSON 兜底）
 ├── data/DeviceInfo.kt       真实设备信息采集 + 启动预热缓存（首帧即完整）
 ├── data/AppearanceSettings.kt 外观设置（玻璃开关 + 玻璃样式，settings 偏好持久化）
-├── data/MockData.kt         仍为假数据的部分（已安装模块列表、KernelSU 运行状态）
+├── data/ModuleStore.kt      已安装模块（ncore `module list --json`）+ 启停/卸载
+├── data/MockData.kt         仅剩运行状态占位数据
 ├── data/registry/           模块仓库（modules.kernelsu.org v1）：解析、缓存、校验下载
-├── data/RootShell.kt        `su -c` 执行封装（带超时，不引 libsu）
+├── data/RootShell.kt        `su -c` 执行封装（优先 /system/bin/su，带超时，不引 libsu）
+├── neko/NekoNative.kt       JNI 绑定（与 app/src/main/cpp/neko_jni.cpp 对应）
+├── neko/NekoKernel.kt       内核查询：版本、授权表、特性位
+├── neko/Ncore.kt            ncore 部署与 CLI（模块安装/启停/卸载/action）
 ├── data/Bugreport.kt        日志收集：脚本、设备信息、tar.gz 打包
 ├── ui/MochiRoot.kt          底部四 Tab 容器
 ├── ui/home/                 首页
@@ -44,6 +48,60 @@ app/src/main/kotlin/com/nekosu/manager/
 ├── ui/mochi/Bits.kt         图标色块 / 开关行 / 应用图标占位
 └── ui/theme/                Mochi 配色、字体、主题入口
 ```
+
+## 底层接线（neko）
+
+底层不再自己拼 `su` / `ksud` 命令，而是接上 [neko](https://github.com/nksu-crew/NekoSU/tree/main/neko)：
+它是 NekoSU 的用户态运行时，内核控制通道、模块运行时、su / resetprop / init 事件都在里面。
+
+```
+neko/                       上游 neko 包（已移除 jni/）
+├── ncore/                  模块安装/启停/卸载、su、resetprop、init 事件、manager 扫描
+├── kzcall/ proto/ store/   内核调用封装、protobuf 模型、profile 存储
+├── third_party/ksu_props/  属性读写
+└── build-ncore.sh          交叉编译 ncore → app/src/main/jniLibs
+uapi/                       内核 UAPI 头（ioctl/selinux/version），kernel 与 ncore 共用一份
+app/src/main/cpp/           本工程自己的 JNI 桥（C++）
+```
+
+### JNI 由本工程实现
+
+上游 `neko/jni` 用 Rust 把整套内核接口导出成 `Java_me_nekosu_aqnya_core_Ncore_*`，这里不保留它：
+
+- `app/src/main/cpp/neko_jni.cpp` 按 `uapi/ioctl.h` 直接走 `prctl(NKSU_PRCTL_GET_CTL_FD)` + `ioctl(IOC_CMD)`，
+  控制 fd 从 `/proc/self/fd` 里按 `[fmac_ctl]` 找（prctl 只负责挂 fd，不改写返回值）；
+- 只导出真正用到的几个：`version / available / hasUid / addUid / delUid / listProfiles / setProfile /
+  featureList / featureGet`，其余（boot 镜像 patch、selinux 批量注入等）不接；
+- Kotlin 侧是 `com.nekosu.manager.neko.NekoNative`，`libneko.so` 加载失败或拿不到 fd 时全部返回 null。
+
+### ncore 的编译与部署
+
+```sh
+NKSU_MANAGER_CERTHASH=<管理器签名证书 SHA-256> ./neko/build-ncore.sh
+```
+
+脚本用 NDK clang 交叉编译（`aarch64-linux-android`，API 31），产物直接放到
+`app/src/main/jniLibs/arm64-v8a/libncore.so`。它其实是**可执行文件顶着 .so 的名字**：
+内核要按 `/data/app/<pkg>/lib/arm64-v8a/libncore.so` 这个路径引导它，所以 APK 里必须解压成真实文件
+（`packaging.jniLibs.useLegacyPackaging = true`）。
+
+首次做 root 操作时 `Ncore.ensureInstalled()` 把它复制到 `/data/adb/ncore` 并跑一次
+`ncore install`，由 ncore 自己铺开 `/data/adb/nksu/bin`。
+
+### 签名约束
+
+内核只把「尾部带有效 RSA-4096 签名」的 ncore 当作可信调用者（`nksu_ncore_verify_caller`），
+签名私钥和 `NKSU_MANAGER_CERTHASH` 都是上游 CI 的 secret，不在仓库里。因此：
+
+| 场景 | 结果 |
+| --- | --- |
+| 用上游私钥 + 官方证书 hash 构建 | 内核认可 ncore，`prctl` 拿到控制 fd，授权表读写直连内核 |
+| 只设了 `NKSU_MANAGER_CERTHASH`（本仓库默认构建） | ncore 能被 `packages.xml` 找到，但没签名 → 内核不给 fd |
+| 两者都没有 | ncore 仅作为 CLI：模块安装/启停/卸载照常，授权退回本地 JSON |
+
+`NekoKernel.available` 为 false 时，`SuProfileStore` 全部走本地存储，`RootShell` 退回
+`su -c`，`ModuleInstaller` 退回 `ksud`——不会因为缺内核模块就假装成功。
+
 
 ## 说明
 

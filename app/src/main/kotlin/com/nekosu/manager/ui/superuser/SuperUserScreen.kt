@@ -121,7 +121,10 @@ fun SuperUserScreen(
     }
 
     LaunchedEffect(reloadKey) { loadApps(showLoading = apps == null) }
-    LaunchedEffect(Unit) { SuProfileStore.init(context) }
+    LaunchedEffect(Unit) {
+        SuProfileStore.init(context)
+        SuProfileStore.refreshFromKernel(context)
+    }
     val profiles by SuProfileStore.profiles.collectAsState()
 
     // 小米「获取应用列表」权限：HyperOS / MIUI 13+ 可以像普通运行时权限一样动态申请，

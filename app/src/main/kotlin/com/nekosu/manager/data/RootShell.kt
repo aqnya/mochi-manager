@@ -1,6 +1,7 @@
 package com.nekosu.manager.data
 
 import android.util.Log
+import com.nekosu.manager.neko.NekoKernel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -37,11 +38,39 @@ object RootShell {
     /** 单次输出上限，防止 logcat 之类的命令把结果全塞进内存。 */
     private const val MAX_OUTPUT_CHARS = 4 * 1024 * 1024
 
+    /**
+     * su 的候选路径。
+     *
+     * NekoSU 内核把 `/system/bin/su` 的 execve 重定向到已签名的 ncore（argv[0] 保持 "su"），
+     * 所以优先走它；没有内核模块的设备再退回 PATH 里的 `su`。
+     */
+    private val SU_CANDIDATES = listOf("/system/bin/su", "su")
+
     /** 走 `su -c`；拿不到 root 时抛 [RootUnavailableException]。 */
     suspend fun exec(
         command: String,
         timeoutSeconds: Long = 60L,
-    ): RootShellResult = run(listOf("su", "-c", command), timeoutSeconds)
+    ): RootShellResult {
+        var last: Throwable? = null
+        for (su in SU_CANDIDATES) {
+            val result =
+                try {
+                    run(listOf(su, "-c", command), timeoutSeconds)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: IOException) {
+                    last = e
+                    continue
+                }
+            // 127 是 shell 报的「找不到命令」，说明这个 su 根本不存在，换下一个
+            if (result.exitCode == 127 && result.output.contains("not found")) {
+                last = IOException("$su 不存在")
+                continue
+            }
+            return result
+        }
+        throw RootUnavailableException("无法执行 su：${last?.message}", last)
+    }
 
     /**
      * 以应用自身身份执行，不经过 `su`。
@@ -55,19 +84,22 @@ object RootShell {
     ): RootShellResult = run(listOf("sh", "-c", command), timeoutSeconds)
 
     /**
-     * 探测能不能拿到 root：`su -c id -u` 输出 `0` 才算。
+     * 探测能不能拿到 root。
      *
-     * 超时、被拒绝、没有 su 二进制都算没有 root，交给调用方降级；
-     * 探测本身触发 KernelSU 的授权弹窗，所以给了比普通命令更长的等待时间。
+     * 先看内核控制通道：能被 ncore 认定为 manager，本身就说明内核模块在、且本应用有 root 能力，
+     * 这样不必再弹一次授权框。通道不可用时才回退到 `su -c id -u`。
      */
-    suspend fun isRootAvailable(timeoutSeconds: Long = 30L): Boolean =
-        try {
+    suspend fun isRootAvailable(timeoutSeconds: Long = 30L): Boolean {
+        val viaKernel = withContext(Dispatchers.IO) { NekoKernel.available }
+        if (viaKernel) return true
+        return try {
             exec("id -u", timeoutSeconds).output.trim() == "0"
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
             false
         }
+    }
 
     private suspend fun run(
         argv: List<String>,

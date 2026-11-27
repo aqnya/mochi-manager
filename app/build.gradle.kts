@@ -8,12 +8,22 @@ plugins {
 android {
     namespace = "com.nekosu.manager"
     compileSdk = 37
+    // neko 的 ncore 只交叉编译到 arm64，管理器也没必要为其它 ABI 带一份空壳。
+    ndkVersion = "27.2.12479018"
     defaultConfig {
         applicationId = "com.nekosu.manager"
         minSdk = 24
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
+        ndk { abiFilters += "arm64-v8a" }
+    }
+
+    // JNI 桥由本工程自己用 C++ 实现（app/src/main/cpp），不引入 neko 的 Rust jni crate。
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
 
     buildTypes {
@@ -45,6 +55,13 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+        jniLibs {
+            // ncore 是「顶着 .so 名字的可执行文件」：内核要按路径读它、首次启动还要
+            // 复制到 /data/adb/ncore。必须解压成真实文件，不能留在 APK 里直接映射。
+            useLegacyPackaging = true
+            // Cargo 已经 strip 过，别再让 AGP 调 NDK 的 strip 处理一遍
+            keepDebugSymbols += "**/libncore.so"
         }
     }
 }

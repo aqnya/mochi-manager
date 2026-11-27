@@ -14,15 +14,19 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -31,8 +35,9 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nekosu.manager.R
-import com.nekosu.manager.data.MockData
 import com.nekosu.manager.data.ModuleEntry
+import com.nekosu.manager.data.ModuleStore
+import kotlinx.coroutines.launch
 import kotlinx.collections.immutable.toImmutableList
 import ui.feice.mochi.basic.MochiBarGroup
 import ui.feice.mochi.basic.MochiBarGroupDropdownItem
@@ -62,8 +67,21 @@ fun ModuleScreen(
     onOpenRepo: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val modules = remember { mutableStateListOf<ModuleEntry>().apply { addAll(MockData.modules) } }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val modules = remember { mutableStateListOf<ModuleEntry>() }
+    var loading by remember { mutableStateOf(true) }
+    var refreshKey by remember { mutableIntStateOf(0) }
     var query by rememberSaveable { mutableStateOf("") }
+
+    // 模块列表来自 ncore（真实的 /data/adb/modules），不再有本地假数据
+    LaunchedEffect(refreshKey) {
+        loading = true
+        val loaded = ModuleStore.load(context).orEmpty()
+        modules.clear()
+        modules.addAll(loaded)
+        loading = false
+    }
     var actionFirst by rememberSaveable { mutableStateOf(false) }
     var enabledFirst by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
@@ -124,6 +142,15 @@ fun ModuleScreen(
         },
     ) {
         when {
+            loading -> item(key = "loading") {
+                Column(
+                    Modifier.fillMaxWidth().padding(top = 60.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    androidx.compose.material3.CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.width(28.dp))
+                }
+            }
+
             visible.isEmpty() -> item(key = "empty") {
                 MochiEmptyState(
                     stringResource(if (searching) R.string.mochi_no_results else R.string.module_empty),
@@ -136,16 +163,19 @@ fun ModuleScreen(
                     ModuleCard(
                         module = module,
                         onToggle = {
-                            val index = modules.indexOfFirst { it.id == module.id }
-                            if (index >= 0) modules[index] = module.copy(enabled = !module.enabled)
+                            scope.launch {
+                                if (ModuleStore.setEnabled(module.id, !module.enabled)) refreshKey++
+                            }
                         },
                         onUninstall = {
-                            val index = modules.indexOfFirst { it.id == module.id }
-                            if (index >= 0) modules[index] = module.copy(remove = true, enabled = false)
+                            scope.launch {
+                                if (ModuleStore.uninstall(module.id)) refreshKey++
+                            }
                         },
                         onUndoUninstall = {
-                            val index = modules.indexOfFirst { it.id == module.id }
-                            if (index >= 0) modules[index] = module.copy(remove = false)
+                            scope.launch {
+                                if (ModuleStore.undoUninstall(module.id)) refreshKey++
+                            }
                         },
                     )
                 }

@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# neko: Rust 交叉编译产物（cargo target）
+/neko/target

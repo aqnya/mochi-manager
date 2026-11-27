@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[workspace]
+members = [
+    "ncore",
+    "third_party/ksu_props/crates/prop-rs",
+    "third_party/ksu_props/crates/prop-rs-android",
+    "kzcall",
+    "proto",
+    "store",
+]
+default-members = [
+    "ncore",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[workspace.dependencies]
+anyhow = "1"
+log = "0.4"
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+strip = true
+lto = true
+opt-level = 3
+panic = "abort"
+codegen-units = 1

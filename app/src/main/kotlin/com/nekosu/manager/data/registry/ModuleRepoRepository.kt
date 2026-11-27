@@ -1,6 +1,8 @@
 package com.nekosu.manager.data.registry
 
 import android.content.Context
+import android.util.Log
+import com.nekosu.manager.neko.Ncore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -12,6 +14,8 @@ import java.net.URL
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
+
+private const val LOG_TAG = "NekoSU/Module"
 
 /** 缓存目录里的一份文本，键直接当文件名用（都由 [RegistryClient] 生成，安全）。 */
 class FileRegistryCache(
@@ -190,9 +194,23 @@ sealed interface InstallOutcome {
 object ModuleInstaller {
     private const val TIMEOUT_SECONDS = 120L
 
-    suspend fun install(zip: File): InstallOutcome =
+    suspend fun install(
+        context: Context,
+        zip: File,
+    ): InstallOutcome =
         withContext(Dispatchers.IO) {
             if (!zip.isFile) return@withContext InstallOutcome.Failure("安装包不存在：${zip.name}")
+
+            // 1) neko 的 ncore：解包、校验 module.prop、写 /data/adb/modules 都由它完成
+            if (runCatching { Ncore.ensureInstalled(context) }.getOrDefault(false)) {
+                val result = runCatching { Ncore.moduleInstall(zip) }.getOrNull()
+                if (result != null && result.exitCode == 0) {
+                    return@withContext InstallOutcome.Success(result.output.ifBlank { "安装完成" })
+                }
+                Log.w(LOG_TAG, "ncore 安装失败：${result?.output?.take(200)}")
+            }
+
+            // 2) 没有可用的 ncore 时退回 KernelSU 的 ksud
             val quoted = "'" + zip.absolutePath.replace("'", "'\\''") + "'"
             var lastFailure: InstallOutcome? = null
             for (ksud in listOf("/data/adb/ksud", "ksud")) {
@@ -289,7 +307,7 @@ class ModuleRepoRepository private constructor(
         onProgress: (Float) -> Unit,
     ): DownloadedModule = RepoDownloads.download(release, File(context.cacheDir, "module_downloads"), onProgress)
 
-    override suspend fun install(zip: File): InstallOutcome = ModuleInstaller.install(zip)
+    override suspend fun install(zip: File): InstallOutcome = ModuleInstaller.install(context, zip)
 
     /** 图标缓存目录，UI 层的图标加载器共用。 */
     val iconDir: File

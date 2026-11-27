@@ -16,3 +16,9 @@
 # 平台类不参与混淆，无需 keep；这里显式忽略可选注解依赖，避免 R8 报缺失类
 -dontwarn org.jetbrains.annotations.**
 -dontwarn javax.annotation.**
+
+# JNI 按「类名 + 方法名」查符号，混淆后 Java_com_nekosu_manager_neko_* 就对不上了。
+-keep class com.nekosu.manager.neko.NekoNative { *; }
+-keepclasseswithmembernames,includedescriptorclasses class * {
+    native <methods>;
+}
