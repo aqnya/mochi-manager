@@ -201,17 +201,24 @@ fun SettingsScreen(
     }
 
     MochiDialog(
-        visible = exportState is LogExportState.Collecting,
+        visible = exportState is LogExportState.Collecting || exportState is LogExportState.Saving,
         onDismissRequest = {},
-        title = stringResource(R.string.log_collecting_title),
-        message = stringResource(R.string.log_collecting_message),
+        title =
+            stringResource(
+                if (exportState is LogExportState.Saving) R.string.log_saving_title else R.string.log_collecting_title,
+            ),
+        message =
+            stringResource(
+                if (exportState is LogExportState.Saving) R.string.log_saving_message else R.string.log_collecting_message,
+            ),
         icon = { CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(28.dp)) },
         actions = persistentListOf(),
     )
     (exportState as? LogExportState.ConfirmPartial)?.let { log ->
         MochiDialog(
             visible = true,
-            onDismissRequest = { LogExportCoordinator.dismiss() },
+            // 关闭确认框等于放弃这份报告，走 cancelPartial（才允许删缓存文件）
+            onDismissRequest = { LogExportCoordinator.cancelPartial() },
             title = stringResource(R.string.log_no_root_title),
             message = stringResource(R.string.log_no_root_message, log.missing),
             icon = { KsuTile("shield", KsuTileColors.Gray) },
@@ -220,7 +227,7 @@ fun SettingsScreen(
                     MochiDialogAction(
                         stringResource(android.R.string.cancel),
                         MochiDialogActionRole.Cancel,
-                        onClick = { LogExportCoordinator.dismiss() },
+                        onClick = { LogExportCoordinator.cancelPartial() },
                     ),
                     MochiDialogAction(
                         stringResource(R.string.log_continue),

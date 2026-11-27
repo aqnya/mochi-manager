@@ -48,6 +48,12 @@ object Bugreport {
 
     suspend fun build(context: Context): BugreportResult =
         withContext(Dispatchers.IO) {
+            // 清掉上次遗留的报告包：用户在无 root 确认框里取消、或分享后没清理时，
+            // cacheDir 里的 tar.gz 会一直留着。新一轮收集开始时清最安全。
+            context.cacheDir
+                .listFiles { f -> f.isFile && f.name.startsWith("NekoSU_bugreport_") && f.name.endsWith(".tar.gz") }
+                ?.forEach { it.delete() }
+
             val dir = File(context.cacheDir, "bugreport")
             dir.deleteRecursively()
             if (!dir.mkdirs()) throw BugreportException("无法创建日志目录")

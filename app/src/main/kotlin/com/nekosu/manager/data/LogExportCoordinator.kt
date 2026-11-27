@@ -32,6 +32,9 @@ sealed interface LogExportState {
     data object Idle : LogExportState
     data object Collecting : LogExportState
 
+    /** 已确认导出，正在把报告写进下载目录。 */
+    data object Saving : LogExportState
+
     /** 无 root：收集完成，等用户确认是否仍要导出。 */
     data class ConfirmPartial(
         val file: File,
@@ -53,16 +56,19 @@ object LogExportCoordinator {
      */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+    // internal setter：仅放开给同模块单测构造状态，生产代码只通过这些方法迁移状态
     var state by mutableStateOf<LogExportState>(LogExportState.Idle)
-        private set
+        internal set
 
     /** intent 里传进来的 context 可能是 Activity，一律只留 applicationContext，避免持有已销毁的 Activity。 */
     fun start(
         context: Context,
         action: LogAction,
     ) {
-        if (state is LogExportState.Collecting) {
-            Log.d(TAG, "start ignored: already collecting")
+        // 收集或保存进行中都不允许再次开始：新一轮收集会清理缓存里的旧报告，
+        // 若旧报告正被写入下载目录，就会把它删掉。
+        if (state is LogExportState.Collecting || state is LogExportState.Saving) {
+            Log.d(TAG, "start ignored: busy state=$state")
             return
         }
         val app = context.applicationContext
@@ -92,16 +98,30 @@ object LogExportCoordinator {
     /** 无 root 提示框里点「继续导出」。 */
     fun confirm(context: Context) {
         val pending = state as? LogExportState.ConfirmPartial ?: return
-        Log.d(TAG, "confirm action=${pending.action}")
+        Log.d(TAG, "confirm action=${pending.action} file=${pending.file.length()} 字节")
+        // 必须先离开 ConfirmPartial：对话框的 action 回调之后往往还会再走一次 onDismissRequest，
+        // 如果此时状态仍是 ConfirmPartial，dismiss/cancel 会把正在写入的源文件删掉，
+        // save 读到一半就 ENOENT（真机上表现为「分享正常、直接导出必失败」）。
+        state = LogExportState.Saving
         deliver(context.applicationContext, pending.action, pending.file, noRoot = true)
     }
 
-    /** 无 root 提示框里点「取消」，或用户主动关掉结果提示。 */
-    fun dismiss() {
-        if (state is LogExportState.ConfirmPartial) {
-            (state as LogExportState.ConfirmPartial).file.delete()
-        }
+    /**
+     * 无 root 提示框里点「取消」或点外部关闭。
+     *
+     * 只回到 Idle，**不在这里删文件**：不同版本对话框可能在 onClick 之前或之后补一次
+     * onDismissRequest，一旦删文件就会把紧接着要写入的源文件删掉（真机上「分享正常、导出失败」
+     * 的 ENOENT 就是这么来的）。残留的缓存包由 [Bugreport] 下次收集时统一清理。
+     */
+    fun cancelPartial() {
+        if (state !is LogExportState.ConfirmPartial) return
+        Log.d(TAG, "cancelPartial，放弃本次导出")
         state = LogExportState.Idle
+    }
+
+    /** 关闭结果提示。只改变界面状态，绝不删文件——文件可能正被分享或已被保存流程接管。 */
+    fun dismiss() {
+        if (state is LogExportState.Notice) state = LogExportState.Idle
     }
 
     private fun deliver(
@@ -110,6 +130,17 @@ object LogExportCoordinator {
         file: File,
         noRoot: Boolean,
     ) {
+        // 报告可能已被上一次流程删掉：给出明确原因，而不是让它变成一条 ENOENT 堆栈
+        if (!file.isFile || file.length() == 0L) {
+            Log.e(TAG, "报告文件不存在：${file.absolutePath}")
+            state =
+                LogExportState.Notice(
+                    app.getString(R.string.log_failed),
+                    app.getString(R.string.log_file_missing),
+                )
+            return
+        }
+        state = LogExportState.Saving
         when (action) {
             LogAction.Save -> {
                 scope.launch {
