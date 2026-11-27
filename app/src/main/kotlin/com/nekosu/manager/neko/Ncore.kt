@@ -29,6 +29,25 @@ object Ncore {
     suspend fun moduleInstall(zip: File): RootShellResult =
         exec("module install ${quote(zip.absolutePath)}", timeoutSeconds = 180L)
 
+    /**
+     * 流式安装：解压、`install.sh` 的每行输出都会实时回调。
+     *
+     * 安装脚本可能停下等用户按音量键，也可能用 `read` 提问，所以这里把输出和
+     * stdin 句柄一起交给界面，而不是等进程退出才拿到一整块文本。
+     */
+    suspend fun moduleInstallStreaming(
+        zip: File,
+        timeoutSeconds: Long = 300L,
+        onStart: (com.nekosu.manager.data.StreamingShell) -> Unit = {},
+        onLine: (String) -> Unit,
+    ): RootShellResult =
+        RootShell.execStreaming(
+            command = "$BOOT_PATH module install ${quote(zip.absolutePath)}",
+            timeoutSeconds = timeoutSeconds,
+            onStart = onStart,
+            onLine = onLine,
+        )
+
     suspend fun moduleUninstall(id: String): RootShellResult = exec("module uninstall ${quote(id)}", 90L)
 
     suspend fun moduleUndoUninstall(id: String): RootShellResult =

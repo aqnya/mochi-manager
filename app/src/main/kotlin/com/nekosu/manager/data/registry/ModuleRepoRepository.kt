@@ -2,6 +2,8 @@ package com.nekosu.manager.data.registry
 
 import android.content.Context
 import android.util.Log
+import com.nekosu.manager.data.RootShell
+import com.nekosu.manager.data.StreamingShell
 import com.nekosu.manager.neko.Ncore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -12,7 +14,6 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
-import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 
 private const val LOG_TAG = "NekoSU/Module"
@@ -194,72 +195,98 @@ sealed interface InstallOutcome {
 object ModuleInstaller {
     private const val TIMEOUT_SECONDS = 120L
 
-    suspend fun install(zip: File): InstallOutcome =
+    /** 安装脚本要现场看输出（还可能等用户按键），超时给宽一点。 */
+    private const val STREAM_TIMEOUT_SECONDS = 300L
+
+    /**
+     * 非流式入口：仓库详情页装完才需要结果，用不到实时输出。
+     *
+     * 内部复用 [installStreaming]，把整份日志攒成 [InstallOutcome] 带回。
+     */
+    suspend fun install(zip: File): InstallOutcome {
+        val log = StringBuilder()
+        val outcome = installStreaming(zip, onLine = { log.append(it).append('\n') })
+        return when (outcome) {
+            is InstallOutcome.Success -> InstallOutcome.Success(outcome.output.ifBlank { log.toString() })
+            is InstallOutcome.Failure -> InstallOutcome.Failure(outcome.message, log.toString())
+        }
+    }
+
+    /**
+     * 流式安装：每行输出实时回调，[onStart] 拿到 stdin 句柄。
+     *
+     * 顺序和之前一致：先 ncore（内核引导的用户态运行时），失败再退回 ksud。
+     * 回退发生时也会往输出里写一行原因，用户能看出为什么换了个执行者。
+     */
+    suspend fun installStreaming(
+        zip: File,
+        onStart: (StreamingShell) -> Unit = {},
+        onLine: (String) -> Unit,
+    ): InstallOutcome =
         withContext(Dispatchers.IO) {
-            if (!zip.isFile) return@withContext InstallOutcome.Failure("安装包不存在：${zip.name}")
+            if (!zip.isFile) {
+                onLine("! 安装包不存在：${zip.name}")
+                return@withContext InstallOutcome.Failure("安装包不存在：${zip.name}")
+            }
 
             // 1) neko 的 ncore：解包、校验 module.prop、写 /data/adb/modules 都由它完成。
             //    ncore 由内核在 boot 阶段引导，这里不负责部署，直接调它的 CLI。
-            val result = runCatching { Ncore.moduleInstall(zip) }.getOrNull()
-            if (result != null && result.exitCode == 0) {
-                return@withContext InstallOutcome.Success(result.output.ifBlank { "安装完成" })
+            onLine("$ ncore module install ${zip.name}")
+            val ncore =
+                runCatching {
+                    Ncore.moduleInstallStreaming(
+                        zip,
+                        STREAM_TIMEOUT_SECONDS,
+                        onStart = onStart,
+                        onLine = onLine,
+                    )
+                }.getOrElse { e ->
+                    if (e is CancellationException) throw e
+                    onLine("! ncore 无法执行：${e.message}")
+                    null
+                }
+            if (ncore != null && ncore.exitCode == 0) {
+                return@withContext InstallOutcome.Success("安装完成")
             }
-            Log.w(LOG_TAG, "ncore 安装失败：${result?.output?.take(200)}")
+            if (ncore != null) {
+                Log.w(LOG_TAG, "ncore 安装失败 exit=${ncore.exitCode}")
+                onLine("! ncore 返回 ${ncore.exitCode}，改用 ksud 重试")
+            }
 
             // 2) 没有可用的 ncore 时退回 KernelSU 的 ksud
             val quoted = "'" + zip.absolutePath.replace("'", "'\\''") + "'"
             var lastFailure: InstallOutcome? = null
             for (ksud in listOf("/data/adb/ksud", "ksud")) {
+                onLine("$ $ksud module install ${zip.name}")
                 val result =
-                    runCatching { exec("$ksud module install $quoted") }
-                        .getOrElse { e ->
-                            lastFailure = InstallOutcome.Failure("无法执行 su：${e.message}")
-                            continue
-                        }
+                    runCatching {
+                        RootShell.execStreaming(
+                            "$ksud module install $quoted",
+                            STREAM_TIMEOUT_SECONDS,
+                            onStart = onStart,
+                            onLine = onLine,
+                        )
+                    }.getOrElse { e ->
+                        if (e is CancellationException) throw e
+                        onLine("! 无法执行 su：${e.message}")
+                        lastFailure = InstallOutcome.Failure("无法执行 su：${e.message}")
+                        continue
+                    }
                 if (result.exitCode == 0) {
-                    return@withContext InstallOutcome.Success(result.output.ifBlank { "安装完成" })
+                    return@withContext InstallOutcome.Success("安装完成")
                 }
                 lastFailure =
                     InstallOutcome.Failure(
                         if (result.output.contains("not found", true)) {
                             "找不到 ksud，确认设备已安装 KernelSU 并能正常授权 root"
                         } else {
-                            "ksud 返回 ${result.exitCode}"
+                            "安装失败（退出码 ${result.exitCode}）"
                         },
                         result.output,
                     )
             }
             lastFailure ?: InstallOutcome.Failure("安装失败")
         }
-
-    private class Result(
-        val exitCode: Int,
-        val output: String,
-    )
-
-    private fun exec(command: String): Result {
-        val process = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
-        val output =
-            process.inputStream.bufferedReader().use { reader ->
-                val text = StringBuilder()
-                val deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS)
-                while (System.currentTimeMillis() < deadline) {
-                    if (reader.ready()) {
-                        text.append(reader.readLine()).append('\n')
-                    } else if (!process.isAlive) {
-                        break
-                    } else {
-                        Thread.sleep(50)
-                    }
-                }
-                if (process.isAlive) {
-                    process.destroy()
-                    throw IOException("ksud 超时（${TIMEOUT_SECONDS}s）")
-                }
-                text.toString().trim()
-            }
-        return Result(process.waitFor(), output)
-    }
 }
 
 /** 列表与详情的数据来源；单测用假实现替换网络。 */

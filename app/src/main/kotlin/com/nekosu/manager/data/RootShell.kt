@@ -4,6 +4,8 @@ import android.util.Log
 import com.nekosu.manager.neko.NekoKernel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -63,6 +65,39 @@ object RootShell {
                     continue
                 }
             // 127 是 shell 报的「找不到命令」，说明这个 su 根本不存在，换下一个
+            if (result.exitCode == 127 && result.output.contains("not found")) {
+                last = IOException("$su 不存在")
+                continue
+            }
+            return result
+        }
+        throw RootUnavailableException("无法执行 su：${last?.message}", last)
+    }
+
+    /**
+     * 边执行边把输出交给 [onLine]，用于安装这类要现场看日志、还可能等用户操作的脚本。
+     *
+     * 和 [exec] 的区别只在「什么时候给结果」：这里输出一产生就回调，脚本 print 的
+     * 「按音量键继续」能立刻出现在界面上；[onStart] 给出句柄，可以把一行文本写进
+     * 脚本的 stdin（安装脚本用 `read` 提问时）。协程取消会销毁进程，不留后台残留。
+     */
+    suspend fun execStreaming(
+        command: String,
+        timeoutSeconds: Long = 120L,
+        onStart: (StreamingShell) -> Unit = {},
+        onLine: (String) -> Unit,
+    ): RootShellResult {
+        var last: Throwable? = null
+        for (su in SU_CANDIDATES) {
+            val result =
+                try {
+                    runStreaming(listOf(su, "-c", command), timeoutSeconds, onStart, onLine)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: IOException) {
+                    last = e
+                    continue
+                }
             if (result.exitCode == 127 && result.output.contains("not found")) {
                 last = IOException("$su 不存在")
                 continue
@@ -146,5 +181,90 @@ object RootShell {
             val result = RootShellResult(process.exitValue(), output.toString().trim())
             Log.d(TAG, "命令结束 exit=${result.exitCode} 输出=${result.output.length} 字: ${argv.joinToString(" ").take(80)}")
             result
+        }
+
+    private suspend fun runStreaming(
+        argv: List<String>,
+        timeoutSeconds: Long,
+        onStart: (StreamingShell) -> Unit,
+        onLine: (String) -> Unit,
+    ): RootShellResult =
+        withContext(Dispatchers.IO) {
+            val process =
+                try {
+                    ProcessBuilder(argv).redirectErrorStream(true).start()
+                } catch (e: IOException) {
+                    throw RootUnavailableException("无法执行 ${argv.firstOrNull()}：${e.message}", e)
+                }
+
+            val output = StringBuilder()
+            val readerThread =
+                Thread({
+                    try {
+                        // 按行读：一行是一次 ui_print，界面按行追加比分块拼接更好读
+                        process.inputStream.bufferedReader().use { reader ->
+                            while (true) {
+                                val line = reader.readLine() ?: break
+                                if (output.length < MAX_OUTPUT_CHARS) output.append(line).append('\n')
+                                try {
+                                    onLine(line)
+                                } catch (e: Throwable) {
+                                    // 回调把界面搞崩了也不能影响读管道，否则进程会被写满阻塞
+                                    Log.w(TAG, "行回调异常", e)
+                                }
+                            }
+                        }
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "读取输出失败", e)
+                    }
+                }, "nekosu-shell-stream").apply { isDaemon = true }
+            readerThread.start()
+
+            try {
+                onStart(StreamingShell(process))
+            } catch (e: Throwable) {
+                Log.w(TAG, "onStart 回调异常", e)
+            }
+
+            val deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(timeoutSeconds)
+            try {
+                while (!process.waitFor(200, TimeUnit.MILLISECONDS)) {
+                    currentCoroutineContext().ensureActive()
+                    if (System.currentTimeMillis() > deadline) {
+                        process.destroyForcibly()
+                        readerThread.join(500)
+                        throw ShellTimeoutException("命令超时（${timeoutSeconds}s）：${argv.lastOrNull()?.take(60)}")
+                    }
+                }
+            } catch (e: CancellationException) {
+                // 用户点了取消：连同 su 下面的脚本一起收掉
+                process.destroyForcibly()
+                throw e
+            }
+
+            readerThread.join(1_000)
+            RootShellResult(process.exitValue(), output.toString().trim())
+        }
+}
+
+/**
+ * 正在运行的流式 shell。
+ *
+ * 只暴露「写一行」这一件事：安装脚本用 `read` / `select` 提问时，界面把用户输入
+ * 通过这里送进去；靠音量键的脚本则不需要它，看到提示按物理键即可。
+ */
+class StreamingShell internal constructor(
+    private val process: Process,
+) {
+    /** 写一行到脚本的 stdin；进程已退出或管道关闭时返回 false。 */
+    fun send(line: String): Boolean =
+        try {
+            val stream = process.outputStream
+            stream.write((line + "\n").toByteArray(Charsets.UTF_8))
+            stream.flush()
+            true
+        } catch (e: IOException) {
+            Log.w(TAG, "写入 stdin 失败：${e.message}")
+            false
         }
 }

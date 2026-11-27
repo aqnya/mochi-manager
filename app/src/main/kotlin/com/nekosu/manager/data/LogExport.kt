@@ -31,10 +31,11 @@ object LogExport {
         context: Context,
         file: File,
         displayName: String,
+        mime: String = MIME,
     ): String =
         withContext(Dispatchers.IO) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                saveViaMediaStore(context, file, displayName)
+                saveViaMediaStore(context, file, displayName, mime)
             } else {
                 saveToDownloads(context, file, displayName)
             }
@@ -45,12 +46,13 @@ object LogExport {
         context: Context,
         file: File,
         displayName: String,
+        mime: String,
     ): String {
         val resolver = context.contentResolver
         val values =
             ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, displayName)
-                put(MediaStore.Downloads.MIME_TYPE, MIME)
+                put(MediaStore.Downloads.MIME_TYPE, mime)
                 put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$FOLDER")
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }

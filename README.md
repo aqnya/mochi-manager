@@ -238,6 +238,19 @@ KernelSU 的 su 白名单与 profile 都以 **uid** 为粒度，所以列表不�
 复制到 `cacheDir/module_import` 并校验 ZIP 魔数（512 MB 上限），再把真实路径交给 ncore/ksud——
 root shell 读不了文档提供者的 fd，必须落盘。
 
+开始安装后进入**安装输出页**（`ui/module/ModuleInstallScreen.kt`），不再是转圈对话框：
+
+| 能力 | 实现 |
+| --- | --- |
+| 实时输出 | `RootShell.execStreaming()` 按行回调，ncore 的 `ui_print` 一到就追加到终端区（等宽字体、可选中复制） |
+| 交互脚本 | 输出命中「音量键 / press volume / 请输入 / [y/n]」时展开输入区与提示条，物理音量键直接按，`read` 型脚本用输入框回话（写入脚本 stdin） |
+| 会话保持 | 任务在 `ModuleInstallSession`（应用级 `SupervisorJob`）里跑，旋转屏幕、切后台都不会中断；页面只是订阅者 |
+| 中断 | 「取消安装」确认后销毁 su 进程，协程取消会向上传播，不留后台残留 |
+| 结果 | 逐个包记账，失败原因按文件名列出；完成后「完成」回到列表并重读 `/data/adb/modules` |
+| 保存日志 | 右上角下载图标写 `Download/NekoSU/NekoSU_module_install_<时间>.log` |
+
+安装期间保持屏幕常亮（`keepScreenOn`）：交互式脚本等的是按键，屏幕灭了就按不到。
+
 清单必须声明 `android.permission.INTERNET`（没有它 `HttpURLConnection` 直接抛 `SecurityException`，
 界面只会显示「加载模块仓库失败」，很难看出是权限问题）；`ManifestPermissionsTest` 盯着这条。
 加载失败时页面给出「重试」按钮，缺网络权限时改为直接写明原因，不给无效的重试入口。

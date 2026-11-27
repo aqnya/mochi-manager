@@ -41,10 +41,9 @@ import androidx.compose.ui.unit.dp
 import com.nekosu.manager.R
 import com.nekosu.manager.data.LocalModuleImport
 import com.nekosu.manager.data.ModuleEntry
+import com.nekosu.manager.data.ModuleInstallSession
 import com.nekosu.manager.data.ModuleStore
 import com.nekosu.manager.data.StagedModule
-import com.nekosu.manager.data.registry.InstallOutcome
-import com.nekosu.manager.data.registry.ModuleInstaller
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.collections.immutable.persistentListOf
@@ -79,6 +78,8 @@ import ui.feice.mochi.theme.MochiTheme
 @Composable
 fun ModuleScreen(
     onOpenRepo: () -> Unit = {},
+    onOpenInstall: () -> Unit = {},
+    reloadKey: Int = 0,
     modifier: Modifier = Modifier,
     loader: suspend () -> List<ModuleEntry>? = { ModuleStore.load() },
 ) {
@@ -105,33 +106,16 @@ fun ModuleScreen(
     }
 
     // 模块列表来自 ncore（真实的 /data/adb/modules），不再有本地假数据
-    LaunchedEffect(refreshKey) { loadModules() }
+    LaunchedEffect(refreshKey, reloadKey) { loadModules() }
 
     val context = LocalContext.current
     var importPhase by remember { mutableStateOf<ImportPhase>(ImportPhase.Idle) }
 
-    // 逐个安装：ncore 一次只处理一个包，串行也方便把失败原因按文件分开
-    suspend fun runImport(items: List<StagedModule>) {
-        var ok = 0
-        val failures = mutableListOf<String>()
-        items.forEachIndexed { index, item ->
-            importPhase = ImportPhase.Running(items, index)
-            val outcome =
-                try {
-                    ModuleInstaller.install(item.file)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    InstallOutcome.Failure(e.message ?: "安装失败")
-                }
-            when (outcome) {
-                is InstallOutcome.Success -> ok++
-                is InstallOutcome.Failure -> failures += "${item.displayName}：${outcome.message}"
-            }
-        }
-        importPhase = ImportPhase.Done(ok, failures)
-        // 装完立刻重读 /data/adb/modules，不用等用户手动下拉
-        if (ok > 0) refreshKey++
+    // 安装交给输出页：脚本的进度、交互提示都要看得见，页面在，任务也在
+    fun beginInstall(items: List<StagedModule>) {
+        ModuleInstallSession.start(items)
+        importPhase = ImportPhase.Idle
+        onOpenInstall()
     }
 
     // 和 KernelSU 的入口一致：ACTION_GET_CONTENT + application/zip + 多选
@@ -156,11 +140,11 @@ fun ModuleScreen(
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Throwable) {
-                        importPhase = ImportPhase.Done(0, listOf(e.message ?: "读不到所选文件"))
+                        importPhase = ImportPhase.Failed(e.message ?: "读不到所选文件")
                         return@launch
                     }
                 // 单个包直接装；多个先列出来确认，和 PR 里的交互一致
-                if (staged.size == 1) runImport(staged) else importPhase = ImportPhase.Confirm(staged)
+                if (staged.size == 1) beginInstall(staged) else importPhase = ImportPhase.Confirm(staged)
             }
         }
 
@@ -292,11 +276,11 @@ fun ModuleScreen(
     ImportDialogs(
         phase = importPhase,
         onDismiss = { importPhase = ImportPhase.Idle },
-        onConfirm = { items -> scope.launch { runImport(items) } },
+        onConfirm = { items -> beginInstall(items) },
     )
 }
 
-/** 本地 ZIP 安装的三种对话框：多选确认、安装中、结果。 */
+/** 本地 ZIP 入口的两种对话框：多选确认、选包失败。进度与结果都在安装输出页里。 */
 @Composable
 private fun ImportDialogs(
     phase: ImportPhase,
@@ -325,46 +309,18 @@ private fun ImportDialogs(
                     ),
             )
 
-        is ImportPhase.Running ->
-            MochiDialog(
-                visible = true,
-                // 安装中不允许关掉，避免用户误以为已经取消
-                onDismissRequest = {},
-                title = stringResource(R.string.module_installing),
-                message =
-                    stringResource(
-                        R.string.module_installing_progress,
-                        phase.items[phase.index].displayName,
-                        phase.index + 1,
-                        phase.items.size,
-                    ),
-                icon = icon,
-                actions = persistentListOf(),
-            )
-
-        is ImportPhase.Done -> {
-            val successText = if (phase.success > 0) stringResource(R.string.module_install_success, phase.success) else ""
-            val message =
-                listOf(successText, phase.failures.joinToString("\n"))
-                    .filter { it.isNotBlank() }
-                    .joinToString("\n")
+        is ImportPhase.Failed ->
             MochiDialog(
                 visible = true,
                 onDismissRequest = onDismiss,
-                title = stringResource(if (phase.failures.isEmpty()) R.string.module_install_done else R.string.module_install_result),
-                message = message,
-                icon = {
-                    MochiIonicon(
-                        if (phase.failures.isEmpty()) "checkmark-circle" else "alert-circle",
-                        size = 44.dp,
-                    )
-                },
+                title = stringResource(R.string.module_install_result),
+                message = phase.message,
+                icon = { MochiIonicon("alert-circle", size = 44.dp) },
                 actions =
                     persistentListOf(
                         MochiDialogAction(stringResource(android.R.string.ok), MochiDialogActionRole.Primary, onClick = onDismiss),
                     ),
             )
-        }
     }
 }
 
@@ -377,14 +333,9 @@ private sealed interface ImportPhase {
         val items: List<StagedModule>,
     ) : ImportPhase
 
-    data class Running(
-        val items: List<StagedModule>,
-        val index: Int,
-    ) : ImportPhase
-
-    data class Done(
-        val success: Int,
-        val failures: List<String>,
+    /** 选的不是能读的 ZIP，或复制到缓存失败。 */
+    data class Failed(
+        val message: String,
     ) : ImportPhase
 }
 
