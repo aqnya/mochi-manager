@@ -48,7 +48,7 @@ data class SuProfile(
         const val NAMESPACE_INHERIT = 0
         const val NAMESPACE_GLOBAL = 1
         const val NAMESPACE_INDIVIDUAL = 2
-        const val DEFAULT_CONTEXT = "u:r:su:s0"
+        const val DEFAULT_CONTEXT = "u:r:nksu:s0"
 
         fun default(
             packageName: String,
