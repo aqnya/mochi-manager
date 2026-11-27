@@ -90,15 +90,19 @@ KernelSU 的 su 白名单与 profile 都以 **uid** 为粒度，所以列表不�
 
 首页「设备信息」不再写死 Pixel，全部取自本机，不需要 root：
 
+取值方式对齐 KernelSU PR #4005 依赖的 `DeviceNameHelper` / `SELinuxChecker` / `HomeViewModel`：
+
 | 字段 | 来源 |
 | --- | --- |
-| 设备型号 | `ro.product.marketname`（ODM/vendor/system 前缀依次回退）→ 厂商 + `Build.MODEL` |
-| 系统版本 | `ro.mi.os.version.name` → `HyperOS 2.0.5.0`；`ro.miui.ui.version.name` → `MIUI`；再拼 `Android ${Build.VERSION.RELEASE}` |
+| 设备型号 | 按 `Build.MANUFACTURER` 分派：小米/红米/POCO 读 `ro.product.marketname`（ODM/vendor/system 前缀依次回退）、OPPO 系 `ro.vendor.oplus.market.name`、vivo/iQOO `ro.vivo.market.name`、华为/荣耀 `ro.config.marketing_name`、中兴/努比亚 `ro.vendor.product.ztename`、三星 `SemFloatingFeature`（反射 + `floating_feature.xml`）；都取不到才回退 `MANUFACTURER BRAND MODEL`（重复词只留一个） |
+| 系统版本 | `ro.mi.os.version.name` → `HyperOS 2.0.5.0`；`ro.miui.ui.version.name` → `MIUI V816`；再拼 `Android ${Build.VERSION.RELEASE}` |
 | 内核版本 | `Os.uname().release` → `/proc/version` → `os.version` |
-| SELinux | `/sys/fs/selinux/enforce`（1/0），不可读时反射 `android.os.SELinux.isSELinuxEnforced()`，selinuxfs 缺失则 Disabled |
-| Seccomp | `/proc/self/status` 的 `Seccomp:` 行（2 = Filter，1 = Strict） |
+| SELinux | 执行 `getenforce`；被拒（stderr 以 `Permission denied` 结尾）判定为 Enforcing；拿不到再读 `/sys/fs/selinux/enforce`，selinuxfs 缺失则 Disabled |
+| Seccomp | `Os.prctl(PR_GET_SECCOMP = 21)` 的返回值：-1 不支持、0 关闭、1 严格、2 过滤 |
 | 管理器版本 | `PackageManager.getPackageInfo` 的 versionName + versionCode |
 | 系统指纹 | `Build.FINGERPRINT` |
 
-所有读取都单独 runCatching，某一项被 ROM 限制只影响那一格（显示「未知」），不会影响页面；
+属性读取先反射 `android.os.SystemProperties.get`，被隐藏 API 策略拦截时退回 `getprop` 子进程。
+
+所有读取都单独 runCatching，某一项被 ROM 限制只影响那一格（显示「未知」/「不支持」），不会影响页面；
 采集在 `Dispatchers.IO` 完成，界面先渲染占位符再替换，避免闪一帧假数据。

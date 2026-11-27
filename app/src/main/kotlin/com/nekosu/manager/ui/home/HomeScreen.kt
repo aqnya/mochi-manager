@@ -229,6 +229,22 @@ private class InfoCell(
 
 @Composable
 private fun SystemInfoSection(info: DeviceInfo) {
+    // 原始值在数据层，翻译放在 UI：PR 的 SystemInfo 也是 raw 字符串 + int 状态码。
+    // 采集未完成时（Empty）统一显示破折号，避免先闪一帧「不支持」。
+    val loading = info === DeviceInfo.Empty
+    val selinux = if (loading) "—" else when (info.selinuxStatus) {
+        "Enforcing" -> stringResource(R.string.selinux_status_enforcing)
+        "Permissive" -> stringResource(R.string.selinux_status_permissive)
+        "Disabled" -> stringResource(R.string.selinux_status_disabled)
+        else -> stringResource(R.string.selinux_status_unknown)
+    }
+    val seccomp = if (loading) "—" else when (info.seccompStatus) {
+        -1 -> stringResource(R.string.seccomp_status_not_supported)
+        0 -> stringResource(R.string.seccomp_status_disabled)
+        1 -> stringResource(R.string.seccomp_status_strict)
+        2 -> stringResource(R.string.seccomp_status_filter)
+        else -> stringResource(R.string.seccomp_status_unknown)
+    }
     Column {
         MochiListSectionHeader(stringResource(R.string.mochi_home_details))
         val line = MochiTheme.colorScheme.onSurface.copy(alpha = 0.10f)
@@ -247,12 +263,12 @@ private fun SystemInfoSection(info: DeviceInfo) {
             InfoDivider(line)
             InfoPair(
                 InfoCell("hardware-chip", stringResource(R.string.home_kernel), shortKernelVersion(info.kernel)),
-                InfoCell("shield-half", stringResource(R.string.home_selinux_status), info.selinux),
+                InfoCell("shield-half", stringResource(R.string.home_selinux_status), selinux),
                 line,
             )
             InfoDivider(line)
             InfoPair(
-                InfoCell("lock-closed", stringResource(R.string.home_seccomp_status), info.seccomp),
+                InfoCell("lock-closed", stringResource(R.string.home_seccomp_status), seccomp),
                 InfoCell("extension-puzzle", stringResource(R.string.home_manager_version), info.managerVersion),
                 line,
             )

@@ -50,9 +50,25 @@ class DeviceInfoTest {
     }
 
     @Test
-    fun `selinux and seccomp are recognised values`() {
-        assertTrue(info.selinux, info.selinux in setOf("Enforcing", "Permissive", "Disabled", "未知"))
-        assertTrue(info.seccomp, info.seccomp in setOf("Filter", "Strict", "Disabled", "未知"))
+    fun `selinux status is a raw value the ui can map`() {
+        assertTrue(
+            "意外的 SELinux 状态：${info.selinuxStatus}",
+            info.selinuxStatus in setOf("Enforcing", "Permissive", "Disabled", "Unknown"),
+        )
+    }
+
+    @Test
+    fun `seccomp status is the prctl return code`() {
+        assertTrue(
+            "意外的 Seccomp 状态：${info.seccompStatus}",
+            info.seccompStatus in -1..2,
+        )
+    }
+
+    @Test
+    fun `device name never repeats the same word`() {
+        val words = info.model.split(' ').filter { it.isNotBlank() }
+        assertEquals(words.size, words.distinctBy { it.lowercase() }.size)
     }
 
     @Test
