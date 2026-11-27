@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nekosu.manager.data.AppearanceSettings
+import com.nekosu.manager.data.GlassStyle
 import com.nekosu.manager.data.InstalledApp
 import com.nekosu.manager.data.groupApps
 import com.nekosu.manager.data.SuProfile
@@ -56,8 +57,9 @@ class ScreenRenderTest {
 
     @Before
     fun seedPackages() {
-        // 截图固定用不透明材质，避免上一个用例开的玻璃影响这一张
+        // 截图固定用不透明材质 + 标准玻璃，避免上一个用例的设置影响这一张
         AppearanceSettings.get(context).updateGlass(false)
+        AppearanceSettings.get(context).updateGlassStyle(GlassStyle.Regular)
         val pm = context.packageManager
         // 后两个包共享 uid（模拟小米服务套件），列表里应合成一行
         listOf(
@@ -151,6 +153,20 @@ class ScreenRenderTest {
             render("glass") { SuperUserScreen(onOpenApp = {}) }
         } finally {
             AppearanceSettings.get(context).updateGlass(false)
+        }
+    }
+
+    @Test
+    fun themeGlass() {
+        // 玻璃开着时主题页会多出「玻璃样式」选择，单独截一张核对版式
+        val settings = AppearanceSettings.get(context)
+        settings.updateGlass(true)
+        settings.updateGlassStyle(GlassStyle.Thick)
+        try {
+            render("theme-glass") { ThemeScreen(onBack = {}) }
+        } finally {
+            settings.updateGlass(false)
+            settings.updateGlassStyle(GlassStyle.Regular)
         }
     }
 }

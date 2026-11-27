@@ -114,7 +114,12 @@
     <string name="theme_glass">玻璃材质</string>
     <string name="theme_glass_summary">标签栏、顶栏按钮、菜单与弹窗</string>
     <string name="theme_glass_footer">玻璃会实时采样背后的页面，GPU 与耗电略高；低版本系统会自动回退成半透明材质。</string>
-    <string name="theme_glass_state_on">当前使用玻璃材质。</string>
+    <string name="theme_glass_style">玻璃样式</string>
+    <string name="theme_glass_style_regular">标准</string>
+    <string name="theme_glass_style_thick">厚实</string>
+    <string name="theme_glass_style_regular_desc">更透，折射更明显，接近系统控制中心</string>
+    <string name="theme_glass_style_thick_desc">磨砂更实，深色壁纸下文字更清楚</string>
+    <string name="theme_glass_state_on">当前使用玻璃材质（%1$s）：%2$s。</string>
     <string name="theme_glass_state_off">当前使用不透明材质。</string>
     <string name="theme_glass_warning_title">开启玻璃材质？</string>
     <string name="theme_glass_warning_message">玻璃材质每帧都要采样背后的页面，GPU 与耗电会略高。可以在这里随时关闭。</string>
