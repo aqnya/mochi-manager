@@ -94,7 +94,11 @@ fun MochiRoot() {
                 if (module == null) {
                     LaunchedEffect(Unit) { navigator.popTo(0) }
                 } else {
-                    ModuleRepoDetailScreen(module = module, onBack = { navigator.pop() })
+                    ModuleRepoDetailScreen(
+                        module = module,
+                        onBack = { navigator.pop() },
+                        onOpenInstall = { navigator.push(RouteModuleInstall) },
+                    )
                 }
             }
 

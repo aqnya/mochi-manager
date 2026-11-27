@@ -165,9 +165,7 @@
     <string name="repo_install_subtitle">%1$s，安装后重启生效</string>
     <string name="repo_install_confirm_title">安装 %1$s？</string>
     <string name="repo_install_confirm_message">将下载 %1$s（%2$s），校验通过后交给 ksud 安装。安装完成后需要重启才能生效。</string>
-    <string name="repo_install_success">安装完成，重启后生效</string>
     <string name="repo_downloading">正在下载 %1$d%%</string>
-    <string name="repo_installing">正在安装…</string>
     <string name="repo_version">版本</string>
     <string name="repo_published">发布时间</string>
     <string name="repo_stars">星标</string>

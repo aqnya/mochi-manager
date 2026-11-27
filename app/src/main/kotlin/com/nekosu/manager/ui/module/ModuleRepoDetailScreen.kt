@@ -26,7 +26,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nekosu.manager.R
-import com.nekosu.manager.data.registry.InstallOutcome
+import com.nekosu.manager.data.ModuleInstallSession
+import com.nekosu.manager.data.StagedModule
 import com.nekosu.manager.data.registry.ModuleInstallService
 import com.nekosu.manager.data.registry.ModuleRepoRepository
 import com.nekosu.manager.data.registry.ModuleRepoSource
@@ -62,7 +63,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** 安装流程的当前阶段，直接映射到按钮文案与下方的状态行。 */
+/** 安装流程的当前阶段：下载在详情页内完成，安装本体统一交给安装输出页。 */
 private sealed interface InstallPhase {
     data object Idle : InstallPhase
 
@@ -70,10 +71,8 @@ private sealed interface InstallPhase {
         val progress: Float,
     ) : InstallPhase
 
-    data object Installing : InstallPhase
-
-    data class Done(
-        val success: Boolean,
+    /** 下载（含完整性校验）失败；安装阶段的失败在安装输出页里展示。 */
+    data class DownloadFailed(
         val message: String,
     ) : InstallPhase
 }
@@ -81,14 +80,16 @@ private sealed interface InstallPhase {
 /**
  * 模块详情：概览、安装、元信息与更新日志。
  *
- * 安装是真实链路：从 Release 记录的 GitHub 地址下载 ZIP → 校验大小与 SHA-256 →
- * `su -c ksud module install <path>`。没有 root 或没有 ksud 时给出可读的失败原因，
- * 不会假装安装成功。脚本类条目（kind=script）不提供安装，只能到网页上运行。
+ * 安装链路与本地 ZIP 导入完全一致：从 Release 记录的 GitHub 地址下载 ZIP（校验大小
+ * 与 SHA-256）→ 交给 [ModuleInstallSession] → 跳转安装输出页。安装的实时输出、
+ * 交互提示与成败结果只在输出页呈现，这里不再内联安装、不绕过输出页。
+ * 脚本类条目（kind=script）不提供安装，只能到网页上运行。
  */
 @Composable
 fun ModuleRepoDetailScreen(
     module: RepoModule,
     onBack: () -> Unit,
+    onOpenInstall: () -> Unit = {},
     modifier: Modifier = Modifier,
     source: ModuleRepoSource = ModuleRepoRepository.get(LocalContext.current),
     installer: ModuleInstallService = ModuleRepoRepository.get(LocalContext.current),
@@ -100,7 +101,6 @@ fun ModuleRepoDetailScreen(
     var error by remember(module.id) { mutableStateOf<Throwable?>(null) }
     var phase by remember(module.id) { mutableStateOf<InstallPhase>(InstallPhase.Idle) }
     var confirm by rememberSaveable(module.id) { mutableStateOf(false) }
-    val installedMessage = stringResource(R.string.repo_install_success)
 
     LaunchedEffect(module.id) {
         try {
@@ -119,7 +119,7 @@ fun ModuleRepoDetailScreen(
     }
 
     fun install(release: RepoRelease) {
-        if (phase is InstallPhase.Downloading || phase is InstallPhase.Installing) return
+        if (phase is InstallPhase.Downloading) return
         confirm = false
         scope.launch {
             phase = InstallPhase.Downloading(0f)
@@ -132,18 +132,18 @@ fun ModuleRepoDetailScreen(
                     throw e
                 } catch (e: Throwable) {
                     phase =
-                        InstallPhase.Done(
-                            false,
+                        InstallPhase.DownloadFailed(
                             if (e is RegistryIntegrityException) e.message.orEmpty() else e.message ?: "下载失败",
                         )
                     return@launch
                 }
-            phase = InstallPhase.Installing
-            phase =
-                when (val outcome = installer.install(downloaded.file)) {
-                    is InstallOutcome.Success -> InstallPhase.Done(true, installedMessage)
-                    is InstallOutcome.Failure -> InstallPhase.Done(false, outcome.message)
-                }
+            // 与本地 ZIP 导入同一条链路：包交给应用级安装会话，实时输出、
+            // 交互提示与成败展示全部在安装输出页，不在详情页内联安装。
+            phase = InstallPhase.Idle
+            ModuleInstallSession.start(
+                listOf(StagedModule(downloaded.file, module.name, downloaded.file.length())),
+            )
+            onOpenInstall()
         }
     }
 
@@ -368,7 +368,7 @@ private fun InstallBlock(
     onOpenWeb: () -> Unit,
 ) {
     val cs = MochiTheme.colorScheme
-    val busy = phase is InstallPhase.Downloading || phase is InstallPhase.Installing
+    val busy = phase is InstallPhase.Downloading
     Column(Modifier.fillMaxWidth().padding(MochiListDefaults.RowPadding)) {
         when {
             module.isScript -> {
@@ -405,7 +405,6 @@ private fun InstallBlock(
                         when (phase) {
                             is InstallPhase.Downloading ->
                                 stringResource(R.string.repo_downloading, (phase.progress * 100).toInt())
-                            InstallPhase.Installing -> stringResource(R.string.repo_installing)
                             else -> stringResource(R.string.repo_install_now)
                         },
                     )
@@ -416,21 +415,22 @@ private fun InstallBlock(
                     style = MochiTheme.textStyles.footnote,
                     color = cs.onSurfaceVariant,
                 )
-                if (phase is InstallPhase.Done) {
+                // 下载失败留在详情页展示；安装成败在安装输出页，这里不再重复
+                if (phase is InstallPhase.DownloadFailed) {
                     Row(
                         Modifier.padding(top = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         MochiIonicon(
-                            if (phase.success) "checkmark-circle" else "alert-circle",
+                            "alert-circle",
                             size = 18.dp,
-                            tint = if (phase.success) cs.primary else cs.error,
+                            tint = cs.error,
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
                             phase.message,
                             style = MochiTheme.textStyles.footnote,
-                            color = if (phase.success) cs.primary else cs.error,
+                            color = cs.error,
                         )
                     }
                 }
