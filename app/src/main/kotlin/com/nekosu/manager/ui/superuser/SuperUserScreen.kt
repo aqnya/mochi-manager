@@ -1,6 +1,9 @@
 package com.nekosu.manager.ui.superuser
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +27,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -41,6 +45,8 @@ import com.nekosu.manager.data.groupApps
 import com.nekosu.manager.ui.mochi.AppIcon
 import com.nekosu.manager.ui.mochi.KsuTileColors
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import ui.feice.mochi.basic.MochiBarGroup
 import ui.feice.mochi.basic.MochiBarGroupDropdownItem
 import ui.feice.mochi.basic.MochiBarGroupItem
@@ -95,9 +101,22 @@ fun SuperUserScreen(
     var showSystem by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
 
+    // 刷新图标：每次 reloadKey 变化（工具栏按钮、菜单项、权限回调、从设置页返回）转一整圈。
+    // 用 Animatable 而不是无限旋转，加载完就停，符合「点一下、转一圈」的 iOS 习惯。
+    val refreshRotation = remember { Animatable(0f) }
+    LaunchedEffect(reloadKey) {
+        if (reloadKey > 0) {
+            refreshRotation.animateTo(
+                targetValue = refreshRotation.value + 360f,
+                animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing),
+            )
+            refreshRotation.snapTo(0f)
+        }
+    }
     LaunchedEffect(reloadKey) {
         apps = null
-        apps = InstalledAppsRepository.load(context)
+        // PackageManager 遍历放到 IO，避免阻塞主线程上的旋转动画
+        apps = withContext(Dispatchers.IO) { InstalledAppsRepository.load(context) }
     }
     LaunchedEffect(Unit) { SuProfileStore.init(context) }
     val profiles by SuProfileStore.profiles.collectAsState()
@@ -187,7 +206,9 @@ fun SuperUserScreen(
         actions = {
             MochiBarGroup(navId = "su.actions") {
                 MochiBarGroupItem(onClick = { reloadKey++ }, navId = "su.reload", contentKey = "refresh") {
-                    MochiIonicon("refresh")
+                    Box(Modifier.graphicsLayer { rotationZ = refreshRotation.value }) {
+                        MochiIonicon("refresh")
+                    }
                 }
                 val items =
                     buildList {

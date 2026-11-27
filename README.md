@@ -50,6 +50,7 @@ app/src/main/kotlin/com/nekosu/manager/
 - 共享 uid 的应用合并为一行，配置按 uid 存取，组内所有包共用（见下文）；
 - 应用配置页已移植（点击超级用户列表任意一行进入）；模块仓库、安装/刷写、外观、Sulog、关于、WebUI 尚未移植。
 - 二级页面用 `MochiNavHost`：iOS 侧推转场 + 跟手侧滑返回（预测性返回），路由在 `ui/superuser/SuperUserFlow.kt`。
+- 超级用户页右上角刷新按钮点击后图标旋转一圈（650ms，fast-out-slow-in），应用列表读取在 IO 线程，不卡动画。
 - 依赖 `io.github.feice11:mochi-compose:0.3.0`，其 `com.kyant:capsule` 为 Java 21 字节码，
   本地单元测试若用 JDK 17 会报 `UnsupportedClassVersionError`，需用 JDK 21 跑测试 JVM
   （`app/build.gradle.kts` 里的 test 配置已处理，路径按需修改）。
