@@ -57,6 +57,9 @@ object NekoNative {
     @JvmStatic
     private external fun nativeReadRootFile(path: String): ByteArray?
 
+    @JvmStatic
+    private external fun nativeWriteRootFile(path: String, data: ByteArray): Int
+
     fun version(): String? = call { nativeVersion() }
 
     fun available(): Boolean = call { nativeAvailable() } ?: false
@@ -91,6 +94,18 @@ object NekoNative {
      * 内核不在线时调用方降级到 [com.nekosu.manager.data.RootShell]。
      */
     fun readRootFile(path: String): ByteArray? = call { nativeReadRootFile(path) }?.takeIf { it.isNotEmpty() }
+
+    /**
+     * 以 root 原子写文件；成功返回 true。
+     *
+     * fork 子进程 setresuid 临时提权，写 `<path>.tmp`（0600）并 fsync，rename 到
+     * [path]，最后 fsync 目录——与上游 store 的持久化语义一致，中途断电不会留下
+     * 半个文件。同 [readRootFile]，只在内核在线且本应用是 manager 时成立。
+     */
+    fun writeRootFile(
+        path: String,
+        data: ByteArray,
+    ): Boolean = call { nativeWriteRootFile(path, data) } == 0
 
     private inline fun <T> call(block: () -> T): T? {
         if (!loaded) return null

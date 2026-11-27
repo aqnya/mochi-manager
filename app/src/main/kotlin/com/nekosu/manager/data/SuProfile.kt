@@ -3,6 +3,7 @@ package com.nekosu.manager.data
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.util.Log
 import com.nekosu.manager.neko.NekoKernel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -113,6 +114,7 @@ fun capsFromMask(mask: Long): Set<String> =
  * 这样共享 uid 的应用不必各自保存一份、也不会出现组内状态不一致。
  */
 object SuProfileStore {
+    private const val TAG = "NekoSU/SuProfile"
     private const val PREFS = "neko_su_profiles"
     private const val KEY_PROFILES = "profiles"
 
@@ -201,25 +203,52 @@ object SuProfileStore {
         prefs?.edit()?.putString(KEY_PROFILES, encode(profiles))?.apply()
     }
 
-    /** 授权开关 + profile 一起写。内核不可用时什么也不做。 */
+    /**
+     * 授权开关 + profile 一起写内核，随后按上游约定落盘到 `/data/adb/nksu/profile`
+     * （内核表是易失的，重启后 ncore 从这份文件恢复授权）。落盘失败不回滚内核写入，
+     * 但要如实告警。
+     */
     private fun writeKernel(profile: SuProfile) {
         if (!NekoKernel.available) return
         scope.launch {
             val ok = NekoKernel.setAllowed(profile.appUid, profile.allowSu)
             if (!ok || !profile.allowSu) return@launch
-            NekoKernel.setProfile(
+            val wrote = NekoKernel.setProfile(
                 uid = profile.appUid,
                 caps = capsMask(profile.capabilities),
                 domain = profile.context,
                 namespace = profile.namespace,
                 rootUid = profile.runAsUid,
             )
+            // 对齐上游 setProfileProto：无论内核 set_profile 是否报错，都把这份
+            // 配置落盘（下次启动 ncore 会再按它灌回内核）
+            val persisted =
+                runCatching {
+                    NksuProfileStore.saveProfile(
+                        NksuProfileStore.ProfileEntry(
+                            uid = profile.appUid,
+                            rootUid = profile.runAsUid,
+                            caps = capsMask(profile.capabilities),
+                            ns = profile.namespace,
+                            domain = profile.context,
+                        ),
+                    )
+                }.getOrDefault(false)
+            if (!persisted) {
+                Log.w(TAG, "授权落盘失败 uid=${profile.appUid}，重启后可能丢失")
+            }
+            if (!wrote) Log.w(TAG, "写入内核 profile 失败 uid=${profile.appUid}")
         }
     }
 
     private fun revokeKernel(uid: Int) {
         if (!NekoKernel.available) return
-        scope.launch { NekoKernel.setAllowed(uid, false) }
+        scope.launch {
+            if (NekoKernel.setAllowed(uid, false)) {
+                runCatching { NksuProfileStore.deleteProfile(uid) }
+                    .onFailure { Log.w(TAG, "撤销授权的落盘失败 uid=$uid：${it.message}") }
+            }
+        }
     }
 
     private fun encode(profiles: Map<Int, SuProfile>): String =
