@@ -1,9 +1,6 @@
 package com.nekosu.manager.ui.superuser
 
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,17 +14,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -46,10 +45,11 @@ import com.nekosu.manager.ui.mochi.AppIcon
 import com.nekosu.manager.ui.mochi.KsuTileColors
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import ui.feice.mochi.basic.MochiBarGroup
 import ui.feice.mochi.basic.MochiBarGroupDropdownItem
-import ui.feice.mochi.basic.MochiBarGroupItem
 import ui.feice.mochi.basic.MochiButton
 import ui.feice.mochi.basic.MochiButtonStyle
 import ui.feice.mochi.basic.MochiEmptyState
@@ -101,22 +101,14 @@ fun SuperUserScreen(
     var showSystem by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
 
-    // 刷新图标：每次 reloadKey 变化（工具栏按钮、菜单项、权限回调、从设置页返回）转一整圈。
-    // 用 Animatable 而不是无限旋转，加载完就停，符合「点一下、转一圈」的 iOS 习惯。
-    val refreshRotation = remember { Animatable(0f) }
-    LaunchedEffect(reloadKey) {
-        if (reloadKey > 0) {
-            refreshRotation.animateTo(
-                targetValue = refreshRotation.value + 360f,
-                animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing),
-            )
-            refreshRotation.snapTo(0f)
-        }
-    }
+    // 下拉刷新（PR 的做法：MochiLazyLargeTitleScaffold 的 onRefresh + isRefreshing 状态），
+    // 动画由 scaffold 自带的指示器负责，这里只负责把“开始/结束”如实告诉它。
+    var refreshing by remember { mutableStateOf(false) }
+    val refreshingState = rememberUpdatedState(refreshing)
     LaunchedEffect(reloadKey) {
         apps = null
-        // PackageManager 遍历放到 IO，避免阻塞主线程上的旋转动画
         apps = withContext(Dispatchers.IO) { InstalledAppsRepository.load(context) }
+        refreshing = false
     }
     LaunchedEffect(Unit) { SuProfileStore.init(context) }
     val profiles by SuProfileStore.profiles.collectAsState()
@@ -154,7 +146,6 @@ fun SuperUserScreen(
     val sortLabels = SortType.entries.map { stringResource(it.labelRes) }
     val reverseLabel = stringResource(R.string.sort_reverse)
     val systemLabel = stringResource(R.string.show_system_apps)
-    val refreshLabel = stringResource(R.string.su_refresh)
 
     // 先按单个应用过滤（系统应用、搜索词），再按 uid 归并：这样搜索「微信」时，
     // 与它共享 uid 的其他包也会一并出现在同一行里，符合“授权对整组生效”的事实。
@@ -205,11 +196,6 @@ fun SuperUserScreen(
         modifier = modifier,
         actions = {
             MochiBarGroup(navId = "su.actions") {
-                MochiBarGroupItem(onClick = { reloadKey++ }, navId = "su.reload", contentKey = "refresh") {
-                    Box(Modifier.graphicsLayer { rotationZ = refreshRotation.value }) {
-                        MochiIonicon("refresh")
-                    }
-                }
                 val items =
                     buildList {
                         SortType.entries.forEachIndexed { index, type ->
@@ -217,7 +203,6 @@ fun SuperUserScreen(
                         }
                         add(MochiItem(reverseLabel, icon = checkIcon(reversed)))
                         add(MochiItem(systemLabel, icon = checkIcon(showSystem)))
-                        add(MochiItem(refreshLabel, icon = { tint -> MochiIonicon("refresh", tint = tint) }))
                     }.toImmutableList()
                 MochiBarGroupDropdownItem(
                     expanded = menu,
@@ -227,8 +212,7 @@ fun SuperUserScreen(
                         when {
                             index < SortType.entries.size -> sortType = SortType.entries[index]
                             index == SortType.entries.size -> reversed = !reversed
-                            index == SortType.entries.size + 1 -> showSystem = !showSystem
-                            else -> reloadKey++
+                            else -> showSystem = !showSystem
                         }
                     },
                     navId = "su.more",
@@ -248,6 +232,17 @@ fun SuperUserScreen(
                     onCancel = { query = "" },
                 )
             }
+        },
+        // PR 的做法：onRefresh 是 suspend 块，指示器在挂起期间一直转；awaitRefresh 保证
+        // 至少走完一轮 true→false，避免加载太快导致动画一闪而过。
+        onRefresh = {
+            awaitRefresh(
+                start = {
+                    refreshing = true
+                    reloadKey++
+                },
+                refreshing = refreshingState,
+            )
         },
     ) {
         if (apps == null) {
@@ -425,4 +420,15 @@ private fun PermissionNotice(
             }
         }
     }
+}
+
+/** Triggers a refresh and waits until [refreshing] goes true (up to 400ms) and back to false. */
+private suspend fun awaitRefresh(start: () -> Unit, refreshing: State<Boolean>) {
+    start()
+    var waited = 0
+    while (!refreshing.value && waited < 400) {
+        delay(50)
+        waited += 50
+    }
+    snapshotFlow { refreshing.value }.first { !it }
 }
