@@ -65,6 +65,7 @@ class SuFilePathHandler(
             Log.w(TAG, "请求越出 webroot：$path")
             return notFound()
         }
+        Log.d(TAG, "serve $path")
         return try {
             val stream =
                 openFile(target, path)

@@ -3,13 +3,16 @@ package com.nekosu.manager.ui.webui
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowManager
+import android.webkit.ConsoleMessage
 import android.webkit.JsPromptResult
 import android.webkit.JsResult
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -29,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.webkit.WebViewAssetLoader
 import com.nekosu.manager.R
@@ -37,6 +41,7 @@ import com.nekosu.manager.data.RootShell
 import com.nekosu.manager.ui.theme.NekoSUTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import ui.feice.mochi.theme.MochiTheme
 
 /** WebUI 域名：WebViewAssetLoader 把模块 webroot 挂在这个 https 域上。 */
 internal const val WEB_DOMAIN = "mui.nekosu.local"
@@ -52,6 +57,8 @@ fun webUiIntent(
 ): Intent = Intent(context, WebUIActivity::class.java).putExtra(EXTRA_MODULE_ID, moduleId)
 
 private const val EXTRA_MODULE_ID = "id"
+
+private const val TAG = "NekoSU/WebUI"
 
 /**
  * 模块 WebUI 的宿主 Activity。
@@ -86,12 +93,16 @@ private fun WebUIContent(
     // Mochi 配色 → WebUI 的 CSS 变量（/internal/colors.css）
     UpdateWebUiCss()
 
+    // WebView 背景用主题底色而不是透明：透明背景在部分设备（HyperOS + WebView 157
+    // 实测）上合成器不出首帧，页面加载正常但整屏只剩 Compose 背景透上来
+    val webViewBackground = MochiTheme.colorScheme.background.toArgb()
+
     LaunchedEffect(moduleId) {
         if (moduleId == null) {
             onFinish()
             return@LaunchedEffect
         }
-        prepareWebView(activity, moduleId, webUIState)
+        prepareWebView(activity, moduleId, webUIState, webViewBackground)
     }
 
     DisposableEffect(Unit) {
@@ -143,6 +154,7 @@ internal suspend fun prepareWebView(
     activity: ComponentActivity,
     moduleId: String,
     webUIState: WebUIState,
+    webViewBackground: Int,
 ) {
     val moduleInfo =
         withContext(Dispatchers.IO) {
@@ -168,7 +180,7 @@ internal suspend fun prepareWebView(
 
     withContext(Dispatchers.Main) {
         val webView = WebView(activity)
-        webView.setBackgroundColor(Color.TRANSPARENT)
+        webView.setBackgroundColor(webViewBackground)
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -199,10 +211,37 @@ internal suspend fun prepareWebView(
                     }
                     super.doUpdateVisitedHistory(view, url, isReload)
                 }
+
+                override fun onReceivedError(
+                    view: WebView,
+                    request: WebResourceRequest,
+                    error: WebResourceError,
+                ) {
+                    if (request.isForMainFrame) {
+                        Log.w(TAG, "主框架加载失败 code=${error.errorCode}: ${error.description} url=${request.url}")
+                    }
+                    super.onReceivedError(view, request, error)
+                }
+
+                override fun onRenderProcessGone(
+                    view: WebView,
+                    detail: RenderProcessGoneDetail,
+                ): Boolean {
+                    Log.e(TAG, "WebView 渲染进程崩溃 didCrash=${detail.didCrash()}")
+                    return false
+                }
             }
 
         webView.webChromeClient =
             object : WebChromeClient() {
+                override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                    Log.i(
+                        TAG,
+                        "JS ${consoleMessage.messageLevel()}: ${consoleMessage.message()} " +
+                            "(${consoleMessage.sourceId()}:${consoleMessage.lineNumber()})",
+                    )
+                    return true
+                }
                 override fun onJsAlert(
                     view: WebView?,
                     url: String?,

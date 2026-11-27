@@ -51,7 +51,8 @@ sealed class WebUIEvent {
  * 对应的 onXxxResult，Mochi 弹窗只管触发。
  */
 class WebUIState {
-    var webView: WebView? = null
+    // Compose 可观察：WebUIScreen 依赖它在 WebView 建好后重组挂载 AndroidView
+    var webView: WebView? by mutableStateOf(null)
     var webViewInterface: WebViewInterface? = null
     lateinit var modDir: String
     var moduleName: String = ""

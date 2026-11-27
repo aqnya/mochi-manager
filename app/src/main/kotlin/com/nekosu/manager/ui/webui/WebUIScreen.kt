@@ -3,6 +3,7 @@ package com.nekosu.manager.ui.webui
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import android.view.ViewGroup
 import android.webkit.WebView
 import androidx.activity.compose.BackHandler
@@ -42,6 +43,19 @@ import ui.feice.mochi.basic.MochiDialogActionRole
 import com.nekosu.manager.R
 import androidx.compose.ui.res.stringResource
 import ui.feice.mochi.basic.MochiTextField
+
+private const val TAG = "NekoSU/WebUI"
+
+/** 布局就绪后的加载入口；记一条日志方便从 bugreport 直接看出加载时机与尺寸。 */
+private fun WebView.loadWhenLaidOut(
+    url: String,
+    webUIState: WebUIState,
+) {
+    if (webUIState.isUrlLoaded) return
+    Log.i(TAG, "loadUrl $url width=$width height=$height")
+    loadUrl(url)
+    webUIState.isUrlLoaded = true
+}
 
 @Composable
 private fun rememberFileLauncher(webUIState: WebUIState) =
@@ -111,9 +125,35 @@ fun WebUIScreen(webUIState: WebUIState) {
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                             )
+                        // loadUrl 必须等 WebView 有了真实尺寸：factory 阶段宽高还是 0，
+                        // 提前加载会让 Chromium 的首帧绘制抑制卡死，页面已运行但永远
+                        // 不出画面（白屏）。和上游一样挂布局监听再加载。
                         if (!webUIState.isUrlLoaded) {
-                            loadUrl("https://" + WEB_DOMAIN + "/index.html")
-                            webUIState.isUrlLoaded = true
+                            val homePage = "https://" + WEB_DOMAIN + "/index.html"
+                            if (width > 0 && height > 0) {
+                                loadWhenLaidOut(homePage, webUIState)
+                            } else {
+                                addOnLayoutChangeListener(
+                                    object : android.view.View.OnLayoutChangeListener {
+                                        override fun onLayoutChange(
+                                            v: android.view.View,
+                                            left: Int,
+                                            top: Int,
+                                            right: Int,
+                                            bottom: Int,
+                                            oldLeft: Int,
+                                            oldTop: Int,
+                                            oldRight: Int,
+                                            oldBottom: Int,
+                                        ) {
+                                            if (v.width > 0 && v.height > 0) {
+                                                v.removeOnLayoutChangeListener(this)
+                                                (v as WebView).loadWhenLaidOut(homePage, webUIState)
+                                            }
+                                        }
+                                    },
+                                )
+                            }
                         }
                     }
                 },
