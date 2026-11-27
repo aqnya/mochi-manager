@@ -50,8 +50,8 @@ app/src/main/kotlin/com/nekosu/manager/
 - 共享 uid 的应用合并为一行，配置按 uid 存取，组内所有包共用（见下文）；
 - 应用配置页已移植（点击超级用户列表任意一行进入）；模块仓库、安装/刷写、外观、Sulog、关于、WebUI 尚未移植。
 - 二级页面用 `MochiNavHost`：iOS 侧推转场 + 跟手侧滑返回（预测性返回），路由在 `ui/superuser/SuperUserFlow.kt`。
-- 超级用户页的刷新按 PR 的做法走**下拉刷新**：`MochiLazyLargeTitleScaffold(onRefresh = ...)`，
-  `awaitRefresh` 等 `isRefreshing` 走完一轮 true→false，避免加载太快导致指示器一闪而过；列表读取在 IO 线程。
+- 超级用户页走**下拉刷新**：`MochiLazyLargeTitleScaffold(onRefresh = ...)`，`onRefresh` 内直接完成加载
+  （`ui/superuser/RefreshGate.kt`），保证最短展示 350ms、最长 15s 必返回，读列表失败只保留旧数据、不影响收起。
 - 依赖 `io.github.feice11:mochi-compose:0.3.0`，其 `com.kyant:capsule` 为 Java 21 字节码，
   本地单元测试若用 JDK 17 会报 `UnsupportedClassVersionError`，需用 JDK 21 跑测试 JVM
   （`app/build.gradle.kts` 里的 test 配置已处理，路径按需修改）。

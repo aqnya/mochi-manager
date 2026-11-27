@@ -14,16 +14,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.State
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,10 +41,9 @@ import com.nekosu.manager.data.groupApps
 import com.nekosu.manager.ui.mochi.AppIcon
 import com.nekosu.manager.ui.mochi.KsuTileColors
 import kotlinx.collections.immutable.toImmutableList
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import ui.feice.mochi.basic.MochiBarGroup
 import ui.feice.mochi.basic.MochiBarGroupDropdownItem
 import ui.feice.mochi.basic.MochiButton
@@ -101,15 +97,30 @@ fun SuperUserScreen(
     var showSystem by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
 
-    // 下拉刷新（PR 的做法：MochiLazyLargeTitleScaffold 的 onRefresh + isRefreshing 状态），
-    // 动画由 scaffold 自带的指示器负责，这里只负责把“开始/结束”如实告诉它。
-    var refreshing by remember { mutableStateOf(false) }
-    val refreshingState = rememberUpdatedState(refreshing)
-    LaunchedEffect(reloadKey) {
-        apps = null
-        apps = withContext(Dispatchers.IO) { InstalledAppsRepository.load(context) }
-        refreshing = false
+    // 读列表串行化：下拉刷新与 reloadKey（权限回调、从设置页返回、重试）不会同时遍历 PackageManager
+    val loadMutex = remember { Mutex() }
+
+    /**
+     * 加载应用列表。`showLoading` 只用于首次进入：刷新时保留旧列表，
+     * 避免内容突然塌成一行 loading（那样列表高度骤变，下拉指示器会错位）。
+     *
+     * 读失败时保留已有数据 —— 之前这里没兜底，异常会把调用它的协程打断，
+     * 导致后面的状态复位被跳过，界面就永远停在刷新态。
+     */
+    suspend fun loadApps(showLoading: Boolean) {
+        if (showLoading) apps = null
+        val loaded =
+            try {
+                loadMutex.withLock { InstalledAppsRepository.load(context) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                apps.orEmpty()
+            }
+        apps = loaded
     }
+
+    LaunchedEffect(reloadKey) { loadApps(showLoading = apps == null) }
     LaunchedEffect(Unit) { SuProfileStore.init(context) }
     val profiles by SuProfileStore.profiles.collectAsState()
 
@@ -233,17 +244,10 @@ fun SuperUserScreen(
                 )
             }
         },
-        // PR 的做法：onRefresh 是 suspend 块，指示器在挂起期间一直转；awaitRefresh 保证
-        // 至少走完一轮 true→false，避免加载太快导致动画一闪而过。
-        onRefresh = {
-            awaitRefresh(
-                start = {
-                    refreshing = true
-                    reloadKey++
-                },
-                refreshing = refreshingState,
-            )
-        },
+        // 刷新必须在这里做完：onRefresh 返回后库才会把 isRefreshing 置回 false。
+        // 不要把加载丢给 LaunchedEffect(reloadKey) 再等一个外部状态 —— 那条链路一旦
+        // 漏掉一次 false（异常、协程重启），下拉就会永久卡住（菊花不消失、列表被顶下去）。
+        onRefresh = { runRefresh { loadApps(showLoading = false) } },
     ) {
         if (apps == null) {
             item(key = "loading") {
@@ -420,15 +424,4 @@ private fun PermissionNotice(
             }
         }
     }
-}
-
-/** Triggers a refresh and waits until [refreshing] goes true (up to 400ms) and back to false. */
-private suspend fun awaitRefresh(start: () -> Unit, refreshing: State<Boolean>) {
-    start()
-    var waited = 0
-    while (!refreshing.value && waited < 400) {
-        delay(50)
-        waited += 50
-    }
-    snapshotFlow { refreshing.value }.first { !it }
 }
