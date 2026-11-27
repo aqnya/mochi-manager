@@ -217,6 +217,12 @@
     <string name="settings_soft_reboot_summary">重启系统服务而不是整机，速度更快</string>
     <string name="settings_umount_modules_default">默认卸载模块</string>
     <string name="settings_umount_modules_default_summary">新应用默认使用「卸载模块」策略</string>
+    <string name="reboot_menu_title">重启</string>
+    <string name="reboot_system">重启</string>
+    <string name="reboot_userspace">用户空间重启</string>
+    <string name="reboot_recovery">重启到 Recovery</string>
+    <string name="reboot_bootloader">重启到 Bootloader</string>
+    <string name="reboot_edl">重启到 EDL 模式</string>
     <string name="enable_web_debugging">Web 调试</string>
     <string name="enable_web_debugging_summary">允许通过 WebUI 调试模块页面</string>
 </resources>

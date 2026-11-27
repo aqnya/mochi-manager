@@ -44,7 +44,6 @@ import com.nekosu.manager.ui.mochi.KsuTileColors
 import com.nekosu.manager.ui.mochi.MochiCredit
 import com.nekosu.manager.ui.mochi.rememberKsuTone
 import com.nekosu.manager.ui.mochi.shortKernelVersion
-import ui.feice.mochi.basic.MochiBarIconButton
 import ui.feice.mochi.basic.Text
 import ui.feice.mochi.effect.content.MochiCounterText
 import ui.feice.mochi.effect.elastic.mochiPressDeform
@@ -89,9 +88,7 @@ fun HomeScreen(
         title = stringResource(R.string.app_name),
         modifier = modifier,
         actions = {
-            MochiBarIconButton(onClick = {}, navId = "home.reboot", contentKey = "power") {
-                MochiIonicon("power")
-            }
+            RebootMenu()
         },
     ) {
         item(key = "status") {

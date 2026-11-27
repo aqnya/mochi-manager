@@ -10,6 +10,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -130,6 +133,19 @@ class ScreenRenderTest {
 
     @Test
     fun home() = render("home") { HomeScreen(onOpenTab = {}) }
+
+    @Test
+    fun homeRebootMenu() {
+        render("home-reboot-menu") { HomeScreen(onOpenTab = {}) }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("重启").performClick()
+        compose.waitForIdle()
+        // Robolectric 的 PowerManager 不支持用户空间重启，菜单里不应出现这一项
+        compose.onNodeWithText("重启到 Recovery").assertExists()
+        compose.onNodeWithText("重启到 Bootloader").assertExists()
+        compose.onNodeWithText("重启到 EDL 模式").assertExists()
+        compose.onNodeWithText("用户空间重启").assertDoesNotExist()
+    }
 
     @Test
     fun superUser() = render("superuser") { SuperUserScreen(onOpenApp = {}) }

@@ -148,6 +148,13 @@ ncore 的 boot 阶段，用编译期指纹，和上面的镜像验签是两回�
   看详情并从 GitHub Release 下载安装；加号是**本地 ZIP 安装**入口（`ACTION_GET_CONTENT`，支持多选，参考
   KernelSU 的交互：单个直接装、多个先列文件确认）。已安装列表来自 ncore，WebUI / Sulog / 关于页尚未移植。
 - 设置页的「保存日志 / 发送日志」已接真实实现（见下文），不再是无动作的空行。
+- 首页右上角的电源按钮接入了**重启菜单**（参照上游 KernelSU 的 `RebootListPopup`）：
+  普通重启 / 用户空间重启 / Recovery / Bootloader / EDL。「用户空间重启」按
+  `PowerManager.isRebootingUserspaceSupported` 过滤，不支持的设备不显示；
+  执行走 root shell 的 `svc power reboot $reason || /system/bin/reboot $reason` 双保险，
+  Recovery 前先按一次 KEYCODE_POWER 消掉厂商 recovery 的「清除数据」提示
+  （`data/Reboot.kt`）。上游的 `soft_reboot` 依赖 `ksud soft-reboot`，ncore 无对等
+  守护进程命令，故不提供。
 - 二级页面用根级 `MochiNavHost`（`ui/MochiRoot.kt`）：标签骨架是它的根页，配置页 / 模块仓库 / 仓库详情 /
   安装页 / 主题页都推到同一个栈上。所以推入二级页时整页连同底部标签栏一起往左退、被新页盖住，
   二级页里不会再出现标签栏；返回手势同时把这一页推回去（iOS 的 `hidesBottomBarWhenPushed`）。
