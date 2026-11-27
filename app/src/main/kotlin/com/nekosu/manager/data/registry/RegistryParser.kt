@@ -33,8 +33,8 @@ internal object RegistryParser {
     fun parseIndex(text: String): Index {
         val root = JSONObject(text)
         requireSchema(root)
-        val modules = root.optString("modules").ifBlank { "api/v1/modules.json" }
-        return Index(buildId = root.optString("buildId"), modulesPath = modules)
+        val modules = root.optText("modules").ifBlank { "api/v1/modules.json" }
+        return Index(buildId = root.optText("buildId"), modulesPath = modules)
     }
 
     fun parseModules(
@@ -49,7 +49,7 @@ internal object RegistryParser {
             val item = array.optJSONObject(i) ?: continue
             parseSummary(item, baseUrl)?.let(modules::add)
         }
-        return Modules(buildId = root.optString("buildId"), modules = modules)
+        return Modules(buildId = root.optText("buildId"), modules = modules)
     }
 
     fun parseDetail(
@@ -74,9 +74,9 @@ internal object RegistryParser {
             license = root.optWebUrlOrText("license"),
             homepage = root.optHttps("homepage"),
             support = root.optHttps("support"),
-            sourceName = source?.optString("fullName")?.takeIf { it.isNotBlank() },
-            sourceUrl = source?.optString("url")?.let(::httpsUrl),
-            sourceCommit = source?.optString("commit")?.takeIf { it.isNotBlank() },
+            sourceName = source?.optText("fullName")?.takeIf { it.isNotBlank() },
+            sourceUrl = source?.optText("url")?.let(::httpsUrl),
+            sourceCommit = source?.optText("commit")?.takeIf { it.isNotBlank() },
             webUrl = webUrl,
             releases = releases.sortedByDescending { it.versionCode },
         )
@@ -86,56 +86,56 @@ internal object RegistryParser {
         item: JSONObject,
         baseUrl: String,
     ): RepoModule? {
-        val id = item.optString("id").trim()
+        val id = item.optText("id").trim()
         if (id.isEmpty()) return null
         // 未知 kind 的条目直接隐藏，避免把脚本当模块安装
         val kind = item.optString("kind", "module")
         if (kind != "module" && kind != "script") return null
-        val detail = item.optString("detail").trim()
+        val detail = item.optText("detail").trim()
         if (!isValidPath(detail)) return null
         val stable = item.optJSONObject("stable")
-        val version = stable?.optString("version").orEmpty()
+        val version = stable?.optText("version").orEmpty()
         val versionCode = stable?.optInt("versionCode", 0) ?: 0
-        val publishedAt = stable?.optString("publishedAt").orEmpty()
+        val publishedAt = stable?.optText("publishedAt").orEmpty()
         return RepoModule(
             id = id,
-            name = item.optString("name").ifBlank { id },
-            summary = item.optString("summary"),
+            name = item.optText("name").ifBlank { id },
+            summary = item.optText("summary"),
             authors = parseAuthors(item.optJSONArray("authors")),
             tags = parseTags(item.optJSONArray("tags")),
             metamodule = item.optBoolean("metamodule", false),
             isScript = kind == "script",
-            iconUrl = item.optString("icon").takeIf { it.isNotBlank() }?.let { resolve(baseUrl, it) },
+            iconUrl = item.optText("icon").takeIf { it.isNotBlank() }?.let { resolve(baseUrl, it) },
             version = version,
             versionCode = versionCode,
             publishedAt = publishedAt,
             releaseEpochMillis = epochMillis(publishedAt),
             stars = item.optIntOrNull("stars"),
-            starsRepository = item.optString("starsRepository").takeIf { it.isNotBlank() },
+            starsRepository = item.optText("starsRepository").takeIf { it.isNotBlank() },
             detailPath = detail,
         )
     }
 
     private fun parseRelease(item: JSONObject): RepoRelease? {
         val zip = item.optJSONObject("zip") ?: return null
-        val url = httpsUrl(zip.optString("url")) ?: return null
+        val url = httpsUrl(zip.optText("url")) ?: return null
         // 上游只允许 GitHub Release 的下载地址，防止索引把用户带到任意主机
         if (!isGitHubReleaseUrl(url)) return null
-        val sha = zip.optString("sha256").trim().lowercase(Locale.ROOT)
+        val sha = zip.optText("sha256").trim().lowercase(Locale.ROOT)
         if (sha.length != 64 || sha.any { it !in "0123456789abcdef" }) return null
         return RepoRelease(
-            tag = item.optString("tag"),
-            name = item.optString("name").ifBlank { item.optString("tag") },
-            version = item.optString("version").ifBlank { item.optString("tag") },
+            tag = item.optText("tag"),
+            name = item.optText("name").ifBlank { item.optText("tag") },
+            version = item.optText("version").ifBlank { item.optText("tag") },
             versionCode = item.optInt("versionCode", 0),
             prerelease = item.optBoolean("prerelease", false),
-            publishedAt = item.optString("publishedAt"),
-            changelog = item.optString("changelogHtml").takeIf { it.isNotBlank() }?.let(::stripHtml)?.takeIf { it.isNotBlank() },
+            publishedAt = item.optText("publishedAt"),
+            changelog = item.optText("changelogHtml").takeIf { it.isNotBlank() }?.let(::stripHtml)?.takeIf { it.isNotBlank() },
             zipUrl = url,
-            zipName = zip.optString("name").ifBlank { "module.zip" },
+            zipName = zip.optText("name").ifBlank { "module.zip" },
             zipSize = zip.optLong("size", 0L),
             sha256 = sha,
-            releaseUrl = httpsUrl(item.optString("releaseUrl")).orEmpty(),
+            releaseUrl = httpsUrl(item.optText("releaseUrl")).orEmpty(),
             immutable = item.optBoolean("immutable", false),
         )
     }
@@ -145,8 +145,8 @@ internal object RegistryParser {
         return buildList {
             for (i in 0 until array.length()) {
                 val author = array.optJSONObject(i) ?: continue
-                val name = author.optString("name").trim()
-                if (name.isNotEmpty()) add(RepoAuthor(name, author.optString("url").let(::httpsUrl)))
+                val name = author.optText("name").trim()
+                if (name.isNotEmpty()) add(RepoAuthor(name, author.optText("url").let(::httpsUrl)))
             }
         }
     }
@@ -155,7 +155,7 @@ internal object RegistryParser {
         if (array == null) return emptyList()
         return buildList {
             for (i in 0 until array.length()) {
-                val tag = array.optString(i).trim()
+                val tag = if (array.isNull(i)) "" else array.optString(i).trim()
                 if (TAG.matches(tag)) add(tag)
             }
         }
@@ -237,15 +237,18 @@ internal object RegistryParser {
             .trim()
     }
 
+    /** `optString` 在字段是 JSON null 时会返回字符串 "null"，拼路径/展示都会带上它。 */
+    private fun JSONObject.optText(key: String): String = if (isNull(key)) "" else optString(key)
+
     private fun JSONObject.optIntOrNull(key: String): Int? =
         if (!has(key) || isNull(key)) null else optInt(key)
 
     /** 许可证通常是 SPDX 标识（MIT、GPL-3.0），也接受 https 链接。 */
     private fun JSONObject.optWebUrlOrText(key: String): String? {
-        val raw = optString(key).trim()
+        val raw = optText(key).trim()
         if (raw.isEmpty()) return null
         return httpsUrl(raw) ?: raw.takeIf { it.length <= 64 && TAG.matches(it) }
     }
 
-    private fun JSONObject.optHttps(key: String): String? = httpsUrl(optString(key))
+    private fun JSONObject.optHttps(key: String): String? = httpsUrl(optText(key))
 }

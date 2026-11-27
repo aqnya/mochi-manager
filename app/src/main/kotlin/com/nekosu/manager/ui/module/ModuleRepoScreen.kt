@@ -32,6 +32,8 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
 import ui.feice.mochi.basic.MochiBarGroup
 import ui.feice.mochi.basic.MochiBarGroupDropdownItem
+import ui.feice.mochi.basic.MochiButton
+import ui.feice.mochi.basic.MochiButtonStyle
 import ui.feice.mochi.basic.MochiEmptyState
 import ui.feice.mochi.basic.MochiItem
 import ui.feice.mochi.basic.MochiSearchBar
@@ -169,9 +171,29 @@ fun ModuleRepoScreen(
             }
 
             current == null -> item(key = "failed") {
+                // 缺 INTERNET 权限时重试没意义（不重新装包不会好），把原因直接写出来
+                val noPermission = error is SecurityException
                 MochiEmptyState(
-                    stringResource(R.string.repo_load_failed),
+                    title = stringResource(R.string.repo_load_failed),
+                    message =
+                        stringResource(
+                            if (noPermission) {
+                                R.string.repo_load_failed_permission
+                            } else {
+                                R.string.repo_load_failed_hint
+                            },
+                        ),
                     icon = { MochiIonicon("cloud-offline", size = 44.dp) },
+                    action = {
+                        if (!noPermission) {
+                            MochiButton(
+                                onClick = { reloadKey++ },
+                                style = MochiButtonStyle.Tonal,
+                            ) {
+                                Text(stringResource(R.string.repo_retry))
+                            }
+                        }
+                    },
                 )
             }
 

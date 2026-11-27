@@ -51,13 +51,14 @@ class RegistryParserTest {
               {"id":"script-one","kind":"script","detail":"api/v1/modules/script-one.json"},
               {"id":"weird","kind":"theme","detail":"api/v1/modules/weird.json"},
               {"id":"escape","detail":"../secrets.json"},
+              {"id":"null-icon","icon":null,"summary":null,"detail":"api/v1/modules/null-icon.json"},
               {"id":"no-detail"}
             ]}
             """.trimIndent()
         val modules = RegistryParser.parseModules(text, base).modules
 
-        // 只留下 A-STEPS 与脚本条目，三个坏条目被丢掉
-        assertEquals(2, modules.size)
+        // 只留下 A-STEPS、脚本条目和图标为 JSON null 的那条，三个坏条目被丢掉
+        assertEquals(3, modules.size)
         val a = modules[0]
         assertEquals("A-STEPS", a.id)
         assertEquals("步骤计数", a.summary)
@@ -68,6 +69,10 @@ class RegistryParserTest {
         assertEquals(42, a.stars)
         assertFalse(a.isScript)
         assertTrue(a.releaseEpochMillis > 0L)
+
+        // icon 是 JSON null 时不能拼成 https://modules.kernelsu.org/null
+        assertNull(modules[2].iconUrl)
+        assertEquals("", modules[2].summary)
 
         val script = modules[1]
         assertTrue(script.isScript)

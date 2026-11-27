@@ -138,3 +138,8 @@ KernelSU 的 su 白名单与 profile 都以 **uid** 为粒度，所以列表不�
 | 刷新 | 与超级用户页同一套 `runRefresh`：最短 350ms、上限 30s（要联网，比读本地列表放宽），取消能向上传播 |
 
 下载的 ZIP 放在 `cacheDir/module_downloads`，按 SHA-256 命名，重复安装同一版本直接复用。
+
+清单必须声明 `android.permission.INTERNET`（没有它 `HttpURLConnection` 直接抛 `SecurityException`，
+界面只会显示「加载模块仓库失败」，很难看出是权限问题）；`ManifestPermissionsTest` 盯着这条。
+加载失败时页面给出「重试」按钮，缺网络权限时改为直接写明原因，不给无效的重试入口。
+站点用 JSON `null` 表示缺失字段，解析时统一按空串处理，避免把 `icon: null` 拼成 `.../null` 的图标地址。

@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 模块仓库（modules.kernelsu.org）与模块图标下载；没有它 HttpURLConnection 直接抛 SecurityException -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 11+ 包可见性：超级用户列表需要读取全部已安装应用（HyperOS / MIUI 同样生效） -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <!--

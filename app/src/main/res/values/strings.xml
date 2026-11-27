@@ -113,6 +113,9 @@
     <string name="repo_empty">暂无模块</string>
     <string name="repo_no_results">没有匹配的模块</string>
     <string name="repo_load_failed">加载模块仓库失败</string>
+    <string name="repo_load_failed_hint">检查网络连接后重试</string>
+    <string name="repo_load_failed_permission">应用缺少网络权限，无法访问模块仓库</string>
+    <string name="repo_retry">重试</string>
     <string name="repo_detail_load_failed">详情加载失败，检查网络后重试</string>
     <string name="repo_stale">无法刷新模块仓库，正在显示上次获取的内容</string>
     <string name="repo_footer">数据来自 KernelSU Modules（modules.kernelsu.org）。安装会校验 Release 记录的大小与 SHA-256，并通过 ksud 完成，需要 KernelSU 授权 root。</string>

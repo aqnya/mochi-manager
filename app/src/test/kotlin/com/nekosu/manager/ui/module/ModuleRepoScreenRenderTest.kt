@@ -18,6 +18,7 @@ import com.nekosu.manager.data.registry.RepoModuleDetail
 import com.nekosu.manager.data.registry.RepoRelease
 import com.nekosu.manager.ui.theme.NekoSUTheme
 import java.io.File
+import java.io.IOException
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -160,6 +161,13 @@ class ModuleRepoScreenRenderTest {
             )
     }
 
+    /** 加载失败：验证失败页的图标、说明与「重试」按钮没有挤在一起。 */
+    private inner class FailingSource : ModuleRepoSource {
+        override suspend fun catalog(): RepoCatalog = throw IOException("HTTP 503")
+
+        override suspend fun detail(module: RepoModule): RepoModuleDetail = throw IOException("HTTP 503")
+    }
+
     private fun render(
         name: String,
         content: @Composable () -> Unit,
@@ -183,6 +191,11 @@ class ModuleRepoScreenRenderTest {
     @Test
     fun repoList() = render("repo-list") {
         ModuleRepoScreen(onBack = {}, onOpenModule = {}, source = FakeSource())
+    }
+
+    @Test
+    fun repoError() = render("repo-error") {
+        ModuleRepoScreen(onBack = {}, onOpenModule = {}, source = FailingSource())
     }
 
     @Test
