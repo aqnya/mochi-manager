@@ -29,7 +29,7 @@ app/src/main/kotlin/com/nekosu/manager/
 ├── data/InstalledApps.kt    真实应用列表（PackageManager）+ 图标缓存
 ├── data/AppGroups.kt        按 uid 归并应用（共享 uid 组、代表应用、属主名）
 ├── data/SuProfile.kt        按 uid 的超级用户配置（本地 JSON 存储，含旧包名数据迁移）
-├── data/DeviceInfo.kt       真实设备信息采集（Build / proc / selinuxfs / PackageManager）
+├── data/DeviceInfo.kt       真实设备信息采集 + 启动预热缓存（首帧即完整）
 ├── data/MockData.kt         仍为假数据的部分（5 个模块、KernelSU 运行状态）
 ├── ui/MochiRoot.kt          底部四 Tab 容器
 ├── ui/home/                 首页
@@ -105,4 +105,4 @@ KernelSU 的 su 白名单与 profile 都以 **uid** 为粒度，所以列表不�
 属性读取先反射 `android.os.SystemProperties.get`，被隐藏 API 策略拦截时退回 `getprop` 子进程。
 
 所有读取都单独 runCatching，某一项被 ROM 限制只影响那一格（显示「未知」/「不支持」），不会影响页面；
-采集在 `Dispatchers.IO` 完成，界面先渲染占位符再替换，避免闪一帧假数据。
+采集在 `MainActivity.onCreate` 的首帧之前同步完成并缓存，首页直接读缓存，**不存在占位符或「—」的中间态**。

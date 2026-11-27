@@ -74,9 +74,8 @@ fun HomeScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(Unit) { SuProfileStore.init(context) }
     val profiles by SuProfileStore.profiles.collectAsState()
-    // 采集在 IO 线程做，先渲染占位符，避免首页出现一帧假数据
-    var device by remember { mutableStateOf(DeviceInfo.Empty) }
-    LaunchedEffect(Unit) { device = DeviceInfoRepository.load(context) }
+    // 启动时已预热；缓存缺失（进程被回收后重建）就同步取一次，保证首帧完整
+    val device = remember { DeviceInfoRepository.current() ?: DeviceInfoRepository.loadNow(context) }
     MochiLazyLargeTitleScaffold(
         title = stringResource(R.string.app_name),
         modifier = modifier,
@@ -229,16 +228,14 @@ private class InfoCell(
 
 @Composable
 private fun SystemInfoSection(info: DeviceInfo) {
-    // 原始值在数据层，翻译放在 UI：PR 的 SystemInfo 也是 raw 字符串 + int 状态码。
-    // 采集未完成时（Empty）统一显示破折号，避免先闪一帧「不支持」。
-    val loading = info === DeviceInfo.Empty
-    val selinux = if (loading) "—" else when (info.selinuxStatus) {
+    // 原始值在数据层，翻译放在 UI：PR 的 SystemInfo 也是 raw 字符串 + int 状态码
+    val selinux = when (info.selinuxStatus) {
         "Enforcing" -> stringResource(R.string.selinux_status_enforcing)
         "Permissive" -> stringResource(R.string.selinux_status_permissive)
         "Disabled" -> stringResource(R.string.selinux_status_disabled)
         else -> stringResource(R.string.selinux_status_unknown)
     }
-    val seccomp = if (loading) "—" else when (info.seccompStatus) {
+    val seccomp = when (info.seccompStatus) {
         -1 -> stringResource(R.string.seccomp_status_not_supported)
         0 -> stringResource(R.string.seccomp_status_disabled)
         1 -> stringResource(R.string.seccomp_status_strict)

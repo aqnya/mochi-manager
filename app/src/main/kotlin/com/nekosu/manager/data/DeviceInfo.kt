@@ -33,43 +33,26 @@ data class DeviceInfo(
     val seccompStatus: Int,
     val kernel: String,
     val fingerprint: String,
-) {
-    companion object {
-        /** 加载中的占位，避免先闪一帧假数据。 */
-        val Empty =
-            DeviceInfo(
-                model = "—",
-                system = "—",
-                managerVersion = "—",
-                selinuxStatus = "Unknown",
-                seccompStatus = -1,
-                kernel = "—",
-                fingerprint = "—",
-            )
-    }
-}
+)
 
 /**
  * 设备信息采集，对齐 KernelSU 的实现。
  *
- * 之前那版的毛病：
- * 1. 只认 `ro.product.marketname`，非小米/一加的机型拿不到商业名；
- * 2. 只靠反射 `SystemProperties`，在隐藏 API 被拦的 ROM 上整块退化成型号代号；
- * 3. SELinux 只读 `/sys/fs/selinux/enforce`，该文件对普通 app 常常不可读；
- * 4. Seccomp 靠解析 `/proc/self/status` 的文字，格式一变就「未知」。
- *
- * 现在按 PR 的做法：
+ * 取值方式：
  * - 机型：按 `Build.MANUFACTURER` 分派属性键（小米 / OPPO 系 / vivo / 荣耀华为 /
  *   中兴努比亚 / 三星），取不到才回退 `MANUFACTURER BRAND MODEL`；
- * - 属性：反射优先，失败再用 `getprop` 子进程兜底（不需要 root）；
+ * - 属性：反射 `SystemProperties` 优先，失败时一次性 `getprop` 取全表（不需要 root）；
  * - SELinux：执行 `getenforce`，被 SELinux 拒绝（stderr 以 Permission denied 结尾）
  *   说明当前域是 enforcing，直接判 Enforcing；拿不到才读 selinuxfs；
  * - Seccomp：`Os.prctl(PR_GET_SECCOMP)` 取内核返回值，异常记 -1（不支持）；
  * - 所有读取独立容错，某一项失败只影响那一格。
+ *
+ * 加载是**同步**的（[loadNow]），并且结果会缓存。App 启动时在 [preload] 里取一次，
+ * 首页首帧直接读 [current]，因此不会出现「—」的中间态。
  */
 object DeviceInfoRepository {
     private const val PR_GET_SECCOMP = 21
-    private const val SHELL_TIMEOUT_MS = 400L
+    private const val SHELL_TIMEOUT_MS = 300L
 
     private val SELINUX_STATES = setOf("Enforcing", "Permissive", "Disabled")
 
@@ -79,18 +62,34 @@ object DeviceInfoRepository {
     private val SAMSUNG_FILES =
         listOf("/vendor/etc/floating_feature.xml", "/system/etc/floating_feature.xml")
 
+    @Volatile
+    private var cached: DeviceInfo? = null
+
+    /** 已取到的值；还没预热时为 null。 */
+    fun current(): DeviceInfo? = cached
+
+    /** 供 Application / Activity 在首帧前调用：取一次并缓存。 */
+    fun preload(context: Context): DeviceInfo {
+        cached?.let { return it }
+        val info = loadNow(context)
+        cached = info
+        return info
+    }
+
+    /** 同步采集，调用方负责放到主线程之外（[preload] 是唯一例外，启动阶段可接受）。 */
+    fun loadNow(context: Context): DeviceInfo =
+        DeviceInfo(
+            model = resolveDeviceName(),
+            system = systemVersion(),
+            managerVersion = managerVersion(context),
+            selinuxStatus = readSELinuxStatus(),
+            seccompStatus = readSeccompStatus(),
+            kernel = kernelVersion(),
+            fingerprint = Build.FINGERPRINT?.takeIf { it.isNotBlank() } ?: "unknown",
+        )
+
     suspend fun load(context: Context): DeviceInfo =
-        withContext(Dispatchers.IO) {
-            DeviceInfo(
-                model = resolveDeviceName(),
-                system = systemVersion(),
-                managerVersion = managerVersion(context),
-                selinuxStatus = readSELinuxStatus(),
-                seccompStatus = readSeccompStatus(),
-                kernel = kernelVersion(),
-                fingerprint = Build.FINGERPRINT?.takeIf { it.isNotBlank() } ?: "unknown",
-            )
-        }
+        withContext(Dispatchers.IO) { current() ?: preload(context) }
 
     // ---------------------------------------------------------------- 机型
 
@@ -107,6 +106,7 @@ object DeviceInfoRepository {
                         "ro.product.vendor.marketname",
                         "ro.product.system.marketname",
                     ).firstNotNullOfOrNull { prop(it).validName() }
+
                 "oppo", "oneplus", "realme", "oplus" -> prop("ro.vendor.oplus.market.name").validName()
                 "vivo", "iqoo" -> prop("ro.vivo.market.name").validName()
                 "honor", "huawei" -> prop("ro.config.marketing_name").validName()
@@ -237,16 +237,22 @@ object DeviceInfoRepository {
 
     /**
      * `android.os.SystemProperties` 是隐藏类，反射在部分 ROM 上会被隐藏 API 策略拦截，
-     * 所以再补一条 `getprop` 子进程兜底 —— 普通应用也有权限执行。
+     * 这时退到 `getprop`。整张表一次取完，避免首帧前连续起多个进程。
      */
     private object Props {
-        private val cache = ConcurrentHashMap<String, String>()
+        private val override = ConcurrentHashMap<String, String>()
+
+        /** 只在反射失败时才真正执行 `getprop`。 */
+        private val table: Map<String, String> by lazy { readTable() }
 
         fun get(key: String): String {
-            cache[key]?.let { return it }
-            val value = byReflection(key) ?: byGetprop(key)
-            cache[key] = value.orEmpty()
-            return value.orEmpty()
+            override[key]?.let { return it }
+            val value = byReflection(key)
+            if (value != null) {
+                override[key] = value
+                return value
+            }
+            return table[key].orEmpty()
         }
 
         @SuppressLint("PrivateApi")
@@ -257,51 +263,48 @@ object DeviceInfoRepository {
                     .invoke(null, key) as? String
             }.getOrNull()?.trim()?.takeIf(String::isNotEmpty)
 
-        private fun byGetprop(key: String): String? =
-            runCatching {
-                val process = ProcessBuilder("getprop", key).redirectErrorStream(true).start()
-                val finished =
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        process.waitFor(SHELL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                    } else {
-                        process.waitFor()
-                        true
-                    }
-                if (!finished) {
-                    process.destroyForcibly()
-                    return null
-                }
-                process.inputStream.bufferedReader().use { it.readText() }.trim().takeIf(String::isNotEmpty)
-            }.getOrNull()
+        /** `getprop` 无参输出 `[ro.product.model]: [Xiaomi 15]` 一行一条。 */
+        private fun readTable(): Map<String, String> {
+            val output = exec("getprop")?.stdout ?: return emptyMap()
+            val map = HashMap<String, String>()
+            val pattern = Regex("""^\[(.+?)\.?\]: \[(.*)]$""")
+            for (line in output.lineSequence()) {
+                val match = pattern.find(line.trim()) ?: continue
+                val key = match.groupValues[1]
+                map[key] = match.groupValues[2]
+            }
+            return map
+        }
     }
 
     private fun prop(key: String): String = Props.get(key)
-
-    private class ShellResult(val code: Int, val stdout: String, val stderr: String)
-
-    private fun exec(command: String): ShellResult? =
-        runCatching {
-            val process = ProcessBuilder(command).redirectErrorStream(false).start()
-            val finished =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    process.waitFor(SHELL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                } else {
-                    process.waitFor()
-                    true
-                }
-            if (!finished) {
-                process.destroyForcibly()
-                return null
-            }
-            val stdout = process.inputStream.bufferedReader().use { it.readText() }
-            val stderr = process.errorStream.bufferedReader().use { it.readText() }
-            ShellResult(process.exitValue(), stdout, stderr)
-        }.getOrNull()
-
-    private fun readFile(path: String): String? =
-        runCatching {
-            val file = File(path)
-            if (!file.canRead()) return null
-            file.readText()
-        }.getOrNull()
 }
+
+private class ShellResult(val code: Int, val stdout: String, val stderr: String)
+
+@SuppressLint("PrivateApi")
+private fun exec(command: String): ShellResult? =
+    runCatching {
+        val process = ProcessBuilder(command).redirectErrorStream(false).start()
+        val finished =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                process.waitFor(300L, TimeUnit.MILLISECONDS)
+            } else {
+                process.waitFor()
+                true
+            }
+        if (!finished) {
+            process.destroyForcibly()
+            return null
+        }
+        val stdout = process.inputStream.bufferedReader().use { it.readText() }
+        val stderr = process.errorStream.bufferedReader().use { it.readText() }
+        ShellResult(process.exitValue(), stdout, stderr)
+    }.getOrNull()
+
+private fun readFile(path: String): String? =
+    runCatching {
+        val file = File(path)
+        if (!file.canRead()) return null
+        file.readText()
+    }.getOrNull()

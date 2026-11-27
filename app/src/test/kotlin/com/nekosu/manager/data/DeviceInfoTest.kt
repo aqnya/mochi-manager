@@ -79,8 +79,11 @@ class DeviceInfoTest {
     }
 
     @Test
-    fun `empty placeholder differs from loaded info`() {
-        assertEquals("—", DeviceInfo.Empty.model)
-        assertFalse(info.model == DeviceInfo.Empty.model)
+    fun `preload fills the cache used by the first frame`() {
+        DeviceInfoRepository.preload(context)
+        val cached = DeviceInfoRepository.current()
+        assertTrue("首帧取不到缓存", cached != null)
+        assertEquals(info.model, cached!!.model)
+        assertFalse(cached.model == "—")
     }
 }
