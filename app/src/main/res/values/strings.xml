@@ -120,6 +120,7 @@
 
     <!-- 模块 -->
     <string name="module_empty">还没有安装模块</string>
+    <string name="module_load_failed">读不到模块列表，确认 NekoSU 内核已加载并已授予 root，然后下拉重试</string>
     <string name="module_update">更新</string>
     <string name="module_sort_action_first">有动作的模块在前</string>
     <string name="module_sort_enabled_first">已启用的模块在前</string>

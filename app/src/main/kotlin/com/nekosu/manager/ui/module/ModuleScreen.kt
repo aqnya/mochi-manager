@@ -66,43 +66,51 @@ import ui.feice.mochi.theme.MochiTheme
 fun ModuleScreen(
     onOpenRepo: () -> Unit = {},
     modifier: Modifier = Modifier,
+    loader: suspend () -> List<ModuleEntry>? = { ModuleStore.load() },
 ) {
     val scope = rememberCoroutineScope()
     val modules = remember { mutableStateListOf<ModuleEntry>() }
     var loading by remember { mutableStateOf(true) }
+    var failed by remember { mutableStateOf(false) }
     var refreshKey by remember { mutableIntStateOf(0) }
     var query by rememberSaveable { mutableStateOf("") }
-
-    // 模块列表来自 ncore（真实的 /data/adb/modules），不再有本地假数据
-    LaunchedEffect(refreshKey) {
-        loading = true
-        val loaded = ModuleStore.load().orEmpty()
-        modules.clear()
-        modules.addAll(loaded)
-        loading = false
-    }
     var actionFirst by rememberSaveable { mutableStateOf(false) }
     var enabledFirst by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
 
+    // 首次进入和下拉刷新共用同一条挂起链路：onRefresh 要等它返回，指示器才会复位。
+    suspend fun loadModules() {
+        loading = true
+        val loaded = loader()
+        failed = loaded == null
+        modules.clear()
+        // ncore 在 module.prop 缺 id 时用目录名兜底，理论上可能撞车；
+        // 重复 key 会让 LazyColumn 直接抛异常，这里先按 id 去重。
+        modules.addAll(loaded.orEmpty().distinctBy { it.id })
+        loading = false
+    }
+
+    // 模块列表来自 ncore（真实的 /data/adb/modules），不再有本地假数据
+    LaunchedEffect(refreshKey) { loadModules() }
+
     val searching = query.isNotBlank()
-    val more = stringResource(R.string.mochi_more)
+    // 这里不能用 remember(query, …) 包住：modules 是 SnapshotStateList，不在 key 里，
+    // 首次组合时列表还是空的，缓存会一直返回那份空结果，加载完成后界面仍然是空态。
     val visible =
-        remember(query, actionFirst, enabledFirst) {
-            modules
-                .filter {
-                    !searching ||
-                        it.name.contains(query, ignoreCase = true) ||
-                        it.description.contains(query, ignoreCase = true)
-                }
-                .sortedWith(
-                    when {
-                        actionFirst -> compareByDescending<ModuleEntry> { it.hasAction }.thenByDescending { it.id }
-                        enabledFirst -> compareByDescending<ModuleEntry> { it.enabled && !it.remove }
-                        else -> compareBy { it.id }
-                    },
-                )
-        }
+        modules
+            .filter {
+                !searching ||
+                    it.name.contains(query, ignoreCase = true) ||
+                    it.id.contains(query, ignoreCase = true) ||
+                    it.description.contains(query, ignoreCase = true)
+            }
+            .sortedWith(
+                when {
+                    actionFirst -> compareByDescending<ModuleEntry> { it.hasAction }.thenByDescending { it.id }
+                    enabledFirst -> compareByDescending<ModuleEntry> { it.enabled && !it.remove }
+                    else -> compareBy { it.id }
+                },
+            )
 
     MochiLazyLargeTitleScaffold(
         title = stringResource(R.string.module),
@@ -139,9 +147,11 @@ fun ModuleScreen(
                 onCancel = { query = "" },
             )
         },
+        // 加载要在 onRefresh 里跑完再返回，库才会复位刷新指示器
+        onRefresh = { loadModules() },
     ) {
         when {
-            loading -> item(key = "loading") {
+            loading && modules.isEmpty() -> item(key = "loading") {
                 Column(
                     Modifier.fillMaxWidth().padding(top = 60.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -152,8 +162,23 @@ fun ModuleScreen(
 
             visible.isEmpty() -> item(key = "empty") {
                 MochiEmptyState(
-                    stringResource(if (searching) R.string.mochi_no_results else R.string.module_empty),
-                    icon = { MochiIonicon(if (searching) "search" else "extension-puzzle", size = 44.dp) },
+                    stringResource(
+                        when {
+                            searching -> R.string.mochi_no_results
+                            failed -> R.string.module_load_failed
+                            else -> R.string.module_empty
+                        },
+                    ),
+                    icon = {
+                        MochiIonicon(
+                            when {
+                                searching -> "search"
+                                failed -> "alert-circle"
+                                else -> "extension-puzzle"
+                            },
+                            size = 44.dp,
+                        )
+                    },
                 )
             }
 

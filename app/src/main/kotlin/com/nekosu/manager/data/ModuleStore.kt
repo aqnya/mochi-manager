@@ -49,8 +49,13 @@ object ModuleStore {
     suspend fun runAction(id: String): Boolean = Ncore.moduleAction(id).exitCode == 0
 
     /** 解析 `module list --json`。字段缺失时按「无」处理，不让一条坏数据丢掉整张表。 */
-    internal fun parse(json: String): List<ModuleEntry> {
-        val array = JSONArray(json)
+    internal fun parse(raw: String): List<ModuleEntry> {
+        // 正常情况 stdout 是纯 JSON，但 RootShell 合并了 stderr：su 或内核在异常路径上
+        // 可能往同一管道写一行提示。只取最外层 [...]，一行噪音不该把整张表打成空态。
+        val start = raw.indexOf('[')
+        val end = raw.lastIndexOf(']')
+        require(start >= 0 && end > start) { "不是 JSON 数组：${raw.take(120)}" }
+        val array = JSONArray(raw.substring(start, end + 1))
         return buildList {
             for (i in 0 until array.length()) {
                 val item = array.optJSONObject(i) ?: continue

@@ -87,4 +87,19 @@ class ModuleStoreTest {
         assertTrue(list[0].hasWebUi)
         assertTrue(list[1].hasWebUi)
     }
+
+    @Test
+    fun `混入 stderr 噪音时仍能解析`() {
+        // RootShell 合并了 stderr，su 或内核的提示行会贴在 JSON 前后
+        val raw =
+            """
+            su: warning: something happened
+            [
+              {"id":"m","name":"M"}
+            ]
+            NekoSU: tail line
+            """.trimIndent()
+
+        assertEquals("m", ModuleStore.parse(raw).single().id)
+    }
 }
