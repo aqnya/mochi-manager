@@ -68,6 +68,18 @@ object NekoKernel {
         return ok
     }
 
+    /** 把一条 profile 落盘到 `/data/adb/nksu/profile`（libstore），重启后 ncore 据此恢复。 */
+    fun saveProfileToStore(
+        uid: Int,
+        rootUid: Int,
+        caps: Long,
+        ns: Int,
+        domain: String,
+    ): Boolean = NekoNative.saveProfile(uid, rootUid, caps, ns, domain)
+
+    /** 从落盘存储删除一条 profile（撤销授权，幂等）。 */
+    fun deleteProfileFromStore(uid: Int): Boolean = NekoNative.deleteProfile(uid)
+
     /** 内核特性表（`<id> <name> <value>`），用于关于页/诊断。 */
     fun features(): Map<String, Long>? {
         val text = NekoNative.featureList() ?: return null

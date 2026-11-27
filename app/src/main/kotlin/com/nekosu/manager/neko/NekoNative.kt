@@ -58,7 +58,16 @@ object NekoNative {
     private external fun nativeReadRootFile(path: String): ByteArray?
 
     @JvmStatic
-    private external fun nativeWriteRootFile(path: String, data: ByteArray): Int
+    private external fun nativeSaveProfile(
+        uid: Int,
+        rootUid: Int,
+        caps: Long,
+        ns: Int,
+        domain: String,
+    ): Int
+
+    @JvmStatic
+    private external fun nativeDeleteProfile(uid: Int): Int
 
     fun version(): String? = call { nativeVersion() }
 
@@ -96,16 +105,24 @@ object NekoNative {
     fun readRootFile(path: String): ByteArray? = call { nativeReadRootFile(path) }?.takeIf { it.isNotEmpty() }
 
     /**
-     * 以 root 原子写文件；成功返回 true。
+     * 把一条 profile 落盘到内核侧存储 `/data/adb/nksu/profile`（libstore 实现）。
      *
-     * fork 子进程 setresuid 临时提权，写 `<path>.tmp`（0600）并 fsync，rename 到
-     * [path]，最后 fsync 目录——与上游 store 的持久化语义一致，中途断电不会留下
-     * 半个文件。同 [readRootFile]，只在内核在线且本应用是 manager 时成立。
+     * fork 子进程 `setresuid(0,0,0)` 临时提权后调 `nksu_store_upsert`——与上游
+     * `setProfileProto`（内核 set_profile + store::profile::save）的落盘语义一致：
+     * 读现有文件 → 按 uid upsert → 临时文件 + fsync + rename 原子写回。ncore 重启
+     * 时从这份文件恢复授权，管理器只写内核不落盘的话授权活不过一次重启。
+     * 成功返回 true；内核不在线 / 提权失败 / 写失败返回 false。
      */
-    fun writeRootFile(
-        path: String,
-        data: ByteArray,
-    ): Boolean = call { nativeWriteRootFile(path, data) } == 0
+    fun saveProfile(
+        uid: Int,
+        rootUid: Int,
+        caps: Long,
+        ns: Int,
+        domain: String,
+    ): Boolean = call { nativeSaveProfile(uid, rootUid, caps, ns, domain) } == 0
+
+    /** 从落盘存储删除一条 profile（撤销授权）；幂等，成功返回 true。 */
+    fun deleteProfile(uid: Int): Boolean = call { nativeDeleteProfile(uid) } == 0
 
     private inline fun <T> call(block: () -> T): T? {
         if (!loaded) return null

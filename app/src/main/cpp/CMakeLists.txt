@@ -8,6 +8,20 @@
 cmake_minimum_required(VERSION 3.22)
 project(nekosu CXX)
 
+# libstore：profile 落盘存储的单一实现（格式与持久化语义对齐上游 neko/store）。
+# JNI（fork + setresuid 临时提权后）与 Rust 侧（ncore 是 root，直接绑定同一份
+# C ABI，见 store/store.h 尾部的绑定示例）共用这一个库。
+add_library(store SHARED store/store.cpp)
+target_compile_features(store PRIVATE cxx_std_20)
+target_compile_options(
+    store
+    PRIVATE
+        -Wall
+        -Wextra
+        -fno-exceptions
+        -fno-rtti
+)
+
 add_library(neko SHARED neko_jni.cpp)
 
 # 内核 UAPI 头只有一份，放在仓库根 uapi/，由 kernel 与 ncore 共用；
@@ -29,4 +43,4 @@ target_compile_options(
 # 只导出 JNI 符号，别把静态链接进来的 libc++ 符号也挂出去
 target_link_options(neko PRIVATE -Wl,--exclude-libs,ALL)
 
-target_link_libraries(neko PRIVATE log)
+target_link_libraries(neko PRIVATE store log)

@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "uapi/ioctl.h"
+#include "store/store.h"
 
 #define TAG "NekoSU/Native"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -212,52 +213,14 @@ bool wait_child(pid_t pid) {
     _exit(0);
 }
 
-/// fork 出的子进程主体：提权后把字节写到临时文件，fsync 后原子 rename 到位，
-/// 最后 fsync 目录——对齐上游 store 的 persist 语义（临时文件 + rename + 目录同步）。
-/// [tmpPath] 与 [dirPath] 由父进程在 fork 前拼好，子进程不做任何分配。
-[[noreturn]] void root_writer_child(
-    const char* path,
-    const char* tmp_path,
-    const char* dir_path,
-    const uint8_t* data,
-    size_t len) {
+/// fork 出的子进程主体：提权到 root 后调用 libstore 完成 store 操作。
+/// ncore 跑在 root 进程里直接调同一份库；管理器进程不是 root，只能借 fork
+/// + setresuid 借出一段临时提权。退出码：0 成功 / 1 提权失败 / 2 store 失败。
+template <typename Op>
+[[noreturn]] void store_child(Op op) {
     if (setresuid(0, 0, 0) != 0 || getuid() != 0) _exit(1);
-
-    // 清掉上次失败残留的临时文件（上游同样先移除）
-    unlink(tmp_path);
-
-    const int file = open(tmp_path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-    if (file < 0) _exit(2);
-
-    size_t off = 0;
-    while (off < len) {
-        const ssize_t w = write(file, data + off, len - off);
-        if (w > 0) {
-            off += static_cast<size_t>(w);
-        } else if (w < 0 && errno == EINTR) {
-            continue;
-        } else {
-            close(file);
-            _exit(3);
-        }
-    }
-
-    // open 的 mode 会过 umask，这里 fchmod 钉死 0600（与上游一致）
-    if (fchmod(file, 0600) != 0 || fsync(file) != 0) {
-        close(file);
-        _exit(4);
-    }
-    close(file);
-
-    if (rename(tmp_path, path) != 0) _exit(5);
-
-    // 目录 fsync 失败只算「不保险」，不算失败（上游仅告警）
-    const int dir = open(dir_path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (dir >= 0) {
-        fsync(dir);
-        close(dir);
-    }
-    _exit(0);
+    const int32_t rc = op();
+    _exit(rc == 0 ? 0 : 2);
 }
 
 }  // namespace
@@ -412,43 +375,41 @@ Java_com_nekosu_manager_neko_NekoNative_nativeReadRootFile(JNIEnv* env, jclass, 
     return result;
 }
 
-/// 以 root 原子写文件：fork 子进程 setresuid 临时提权，写临时文件并 fsync，
-/// rename 到目标路径，再 fsync 目录（对齐上游 store 的持久化语义，目标 0600）。
-/// 返回 0 成功；负值失败（-1 环境问题，-N 子进程在第 N 步失败），Kotlin 侧据此告警。
+/// 把一条 profile 落盘到 /data/adb/nksu/profile（libstore 实现，fork 子进程临时
+/// 提权执行）。返回 0 成功；-1 环境/fork 问题；1 提权失败；2 store 操作失败。
+/// 对齐上游 setProfileProto 的行为：内核 set_profile 之后再调这里落盘。
 JNIEXPORT jint JNICALL
-Java_com_nekosu_manager_neko_NekoNative_nativeWriteRootFile(
-    JNIEnv* env, jclass, jstring jpath, jbyteArray jdata) {
-    const char* path = env->GetStringUTFChars(jpath, nullptr);
-    if (path == nullptr) return -1;
-    const jsize len = env->GetArrayLength(jdata);
+Java_com_nekosu_manager_neko_NekoNative_nativeSaveProfile(
+    JNIEnv* env, jclass, jint uid, jint root_uid, jlong caps, jint ns, jstring jdomain) {
+    nksu_profile entry = {};
+    entry.uid = static_cast<uint32_t>(uid);
+    entry.root_uid = static_cast<uint32_t>(root_uid);
+    entry.caps = static_cast<uint64_t>(caps);
+    entry.ns = ns;
 
-    // fork 前把所有需要的东西备好：数据拷进进程内存，tmp/目录路径拼好，
-    // 子进程里只做 syscall，不做 JNI、不做内存分配
-    std::vector<uint8_t> data;
-    data.resize(static_cast<size_t>(len));
-    if (len > 0) {
-        env->GetByteArrayRegion(jdata, 0, len, reinterpret_cast<jbyte*>(data.data()));
-    }
-
-    const std::string path_str(path);
-    env->ReleaseStringUTFChars(jpath, path);
-    const std::string tmp_path = path_str + ".tmp";
-    const size_t slash = path_str.rfind('/');
-    const std::string dir_path = slash == std::string::npos ? "." : path_str.substr(0, slash);
-
-    static const bool sigpipe_ignored = [] {
-        signal(SIGPIPE, SIG_IGN);
-        return true;
-    }();
-    (void)sigpipe_ignored;
+    const char* domain_chars = env->GetStringUTFChars(jdomain, nullptr);
+    if (domain_chars == nullptr) return -1;
+    std::strncpy(entry.domain, domain_chars, NKSU_STORE_DOMAIN_MAX - 1);
+    entry.domain[NKSU_STORE_DOMAIN_MAX - 1] = '\0';
+    env->ReleaseStringUTFChars(jdomain, domain_chars);
 
     const pid_t pid = fork();
     if (pid < 0) return -1;
     if (pid == 0) {
-        root_writer_child(path_str.c_str(), tmp_path.c_str(), dir_path.c_str(),
-                          data.data(), data.size());
+        store_child([&] { return nksu_store_upsert(&entry); });
     }
+    if (!wait_child(pid)) return -1;
+    return 0;
+}
 
+/// 从落盘存储删除一条 profile（撤销授权时调用，幂等）。返回值含义同上。
+JNIEXPORT jint JNICALL
+Java_com_nekosu_manager_neko_NekoNative_nativeDeleteProfile(JNIEnv*, jclass, jint uid) {
+    const pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        store_child([&] { return nksu_store_delete(static_cast<uint32_t>(uid)); });
+    }
     if (!wait_child(pid)) return -1;
     return 0;
 }

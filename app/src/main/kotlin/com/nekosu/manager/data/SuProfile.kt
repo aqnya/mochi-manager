@@ -204,7 +204,7 @@ object SuProfileStore {
     }
 
     /**
-     * 授权开关 + profile 一起写内核，随后按上游约定落盘到 `/data/adb/nksu/profile`
+     * 授权开关 + profile 一起写内核，随后经 libstore 落盘到 `/data/adb/nksu/profile`
      * （内核表是易失的，重启后 ncore 从这份文件恢复授权）。落盘失败不回滚内核写入，
      * 但要如实告警。
      */
@@ -223,17 +223,13 @@ object SuProfileStore {
             // 对齐上游 setProfileProto：无论内核 set_profile 是否报错，都把这份
             // 配置落盘（下次启动 ncore 会再按它灌回内核）
             val persisted =
-                runCatching {
-                    NksuProfileStore.saveProfile(
-                        NksuProfileStore.ProfileEntry(
-                            uid = profile.appUid,
-                            rootUid = profile.runAsUid,
-                            caps = capsMask(profile.capabilities),
-                            ns = profile.namespace,
-                            domain = profile.context,
-                        ),
-                    )
-                }.getOrDefault(false)
+                NekoKernel.saveProfileToStore(
+                    uid = profile.appUid,
+                    rootUid = profile.runAsUid,
+                    caps = capsMask(profile.capabilities),
+                    ns = profile.namespace,
+                    domain = profile.context,
+                )
             if (!persisted) {
                 Log.w(TAG, "授权落盘失败 uid=${profile.appUid}，重启后可能丢失")
             }
@@ -245,8 +241,9 @@ object SuProfileStore {
         if (!NekoKernel.available) return
         scope.launch {
             if (NekoKernel.setAllowed(uid, false)) {
-                runCatching { NksuProfileStore.deleteProfile(uid) }
-                    .onFailure { Log.w(TAG, "撤销授权的落盘失败 uid=$uid：${it.message}") }
+                if (!NekoKernel.deleteProfileFromStore(uid)) {
+                    Log.w(TAG, "撤销授权的落盘失败 uid=$uid")
+                }
             }
         }
     }
