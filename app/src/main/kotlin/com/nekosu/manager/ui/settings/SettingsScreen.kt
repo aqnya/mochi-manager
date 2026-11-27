@@ -69,13 +69,17 @@ fun SettingsScreen(
     var collecting by remember { mutableStateOf(false) }
     // 生成完等用户选保存路径的那个文件；取消或写完就删掉，不在缓存里堆
     var pending by remember { mutableStateOf<File?>(null) }
+    var pendingPartial by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<Pair<String, String>?>(null) }
+    // 没有 root 时先收集，再问一句要不要继续导出——不直接失败
+    var partial by remember { mutableStateOf<PartialLog?>(null) }
 
     val failTitle = stringResource(R.string.log_failed)
     val needRoot = stringResource(R.string.log_need_root)
     val exportFailed = stringResource(R.string.log_export_failed)
     val savedTitle = stringResource(R.string.log_saved)
     val savedMessage = stringResource(R.string.log_saved_message)
+    val savedPartialMessage = stringResource(R.string.log_saved_no_root)
     val sendLabel = stringResource(R.string.send_log)
 
     fun errorText(e: Throwable): String =
@@ -89,7 +93,9 @@ fun SettingsScreen(
     val exporter =
         rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gzip")) { uri ->
             val file = pending
+            val wasPartial = pendingPartial
             pending = null
+            pendingPartial = false
             if (file == null) return@rememberLauncherForActivityResult
             if (uri == null) {
                 file.delete()
@@ -105,42 +111,54 @@ fun SettingsScreen(
                         }.isSuccess
                     }
                 file.delete()
-                notice = if (written) savedTitle to savedMessage else failTitle to exportFailed
+                notice =
+                    if (!written) {
+                        failTitle to exportFailed
+                    } else {
+                        savedTitle to if (wasPartial) savedPartialMessage else savedMessage
+                    }
             }
         }
 
-    fun exportLog() {
-        if (collecting) return
-        scope.launch {
-            collecting = true
-            try {
-                val file = Bugreport.build(context)
+    fun deliver(
+        action: LogAction,
+        file: File,
+        noRoot: Boolean = false,
+    ) {
+        when (action) {
+            LogAction.Save -> {
                 pending = file
+                pendingPartial = noRoot
                 exporter.launch(file.name)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                notice = failTitle to errorText(e)
-            } finally {
-                collecting = false
+            }
+
+            LogAction.Share -> {
+                runCatching {
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                    val send =
+                        Intent(Intent.ACTION_SEND).apply {
+                            type = "application/gzip"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                    context.startActivity(Intent.createChooser(send, sendLabel))
+                }.onFailure { notice = failTitle to errorText(it) }
             }
         }
     }
 
-    fun shareLog() {
+    fun collect(action: LogAction) {
         if (collecting) return
         scope.launch {
             collecting = true
             try {
-                val file = Bugreport.build(context)
-                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                val send =
-                    Intent(Intent.ACTION_SEND).apply {
-                        type = "application/gzip"
-                        putExtra(Intent.EXTRA_STREAM, uri)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                context.startActivity(Intent.createChooser(send, sendLabel))
+                val result = Bugreport.build(context)
+                if (result.rooted) {
+                    deliver(action, result.file)
+                } else {
+                    // 没 root 也能拿到设备信息与自身日志；先让用户知道缺了什么再决定是否继续
+                    partial = PartialLog(result.file, action, result.missing.size)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -273,13 +291,13 @@ fun SettingsScreen(
                     stringResource(R.string.save_log),
                     subtitle = stringResource(R.string.save_log_summary),
                     leading = { KsuTile("save") },
-                    onClick = ::exportLog,
+                    onClick = { collect(LogAction.Save) },
                 )
                 MochiListRow(
                     stringResource(R.string.send_log),
                     subtitle = stringResource(R.string.send_log_summary),
                     leading = { KsuTile("share") },
-                    onClick = ::shareLog,
+                    onClick = { collect(LogAction.Share) },
                 )
                 MochiListRow(
                     stringResource(R.string.about),
@@ -300,6 +318,37 @@ fun SettingsScreen(
         icon = { CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(28.dp)) },
         actions = persistentListOf(),
     )
+    partial?.let { log ->
+        MochiDialog(
+            visible = true,
+            onDismissRequest = {
+                log.file.delete()
+                partial = null
+            },
+            title = stringResource(R.string.log_no_root_title),
+            message = stringResource(R.string.log_no_root_message, log.missing),
+            icon = { KsuTile("shield", KsuTileColors.Gray) },
+            actions =
+                persistentListOf(
+                    MochiDialogAction(
+                        stringResource(android.R.string.cancel),
+                        MochiDialogActionRole.Cancel,
+                        onClick = {
+                            log.file.delete()
+                            partial = null
+                        },
+                    ),
+                    MochiDialogAction(
+                        stringResource(R.string.log_continue),
+                        MochiDialogActionRole.Primary,
+                        onClick = {
+                            partial = null
+                            deliver(log.action, log.file, noRoot = true)
+                        },
+                    ),
+                ),
+        )
+    }
     notice?.let { (title, message) ->
         MochiDialog(
             visible = true,
@@ -317,3 +366,13 @@ fun SettingsScreen(
         )
     }
 }
+
+/** 日志条目的两种去向。 */
+private enum class LogAction { Save, Share }
+
+/** 无 root 时收集好的报告，等用户确认后再导出/分享。 */
+private class PartialLog(
+    val file: File,
+    val action: LogAction,
+    val missing: Int,
+)

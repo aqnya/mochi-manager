@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.File
 import java.util.Date
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -39,6 +40,8 @@ class BugreportTest {
             "/data/adb/ksu/.allowlist",
             "/data/adb/modules",
             "ksud --version",
+            "/proc/version",
+            "/proc/self/status",
         ).forEach { needle ->
             assertTrue("脚本缺少 $needle", script.contains(needle))
         }
@@ -72,5 +75,62 @@ class BugreportTest {
         listOf("NekoSU Manager", "Android:", "BRAND:", "MODEL:", "FINGERPRINT:", "SELinux:", "Kernel:").forEach {
             assertTrue("基础信息缺少 $it", text.contains(it))
         }
+    }
+
+    @Test
+    fun `basic report records whether root was used`() {
+        assertTrue(Bugreport.basicReport(context, rooted = true).contains("Root: yes"))
+        val local = Bugreport.basicReport(context, rooted = false)
+        assertTrue(local.contains("Root: no"))
+        assertTrue(local.contains("Collected as: app"))
+    }
+
+    @Test
+    fun `empty outputs are pruned and listed`() {
+        val dir = File(context.cacheDir, "bugreport-prune").apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        File(dir, "collect.sh").writeText("#!/system/bin/sh\n")
+        File(dir, "dmesg.txt").writeText("")
+        File(dir, "logcat.txt").writeText("")
+        File(dir, "getprop.txt").writeText("[ro.build.version.sdk]: [30]\n")
+
+        val missing = Bugreport.pruneEmpty(dir)
+
+        // 空的删掉、有内容的留下，脚本本身不算缺失
+        assertEquals(listOf("dmesg.txt", "logcat.txt"), missing)
+        assertTrue(!File(dir, "dmesg.txt").exists())
+        assertTrue(File(dir, "getprop.txt").isFile)
+        assertTrue(File(dir, "collect.sh").isFile)
+        val note = File(dir, "missing.txt").readText()
+        assertTrue(note.contains("dmesg.txt"))
+        assertTrue(note.contains("无 root 时"))
+    }
+
+    @Test
+    fun `nothing missing writes no list`() {
+        val dir = File(context.cacheDir, "bugreport-clean").apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        File(dir, "getprop.txt").writeText("ok\n")
+        assertTrue(Bugreport.pruneEmpty(dir).isEmpty())
+        assertTrue(!File(dir, "missing.txt").exists())
+    }
+
+    @Test
+    fun `app shell works without su`() =
+        runBlocking {
+            val result = RootShell.execAsUser("echo hello")
+            assertEquals(0, result.exitCode)
+            assertEquals("hello", result.output)
+        }
+
+    @Test
+    fun `root probe never throws`() {
+        // 沙箱里可能没有 su，也可能就是 root；两种都只返回布尔值，不能抛出去
+        val rooted = runBlocking { RootShell.isRootAvailable(timeoutSeconds = 5) }
+        assertTrue(rooted || !rooted)
     }
 }

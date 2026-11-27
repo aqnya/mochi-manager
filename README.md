@@ -153,12 +153,15 @@ KernelSU 的 su 白名单与 profile 都以 **uid** 为粒度，所以列表不�
 
 | 环节 | 实现 |
 | --- | --- |
-| 收集 | 生成一个 sh 脚本交给一次 `su -c` 执行，逐条 `2>/dev/null`，某路径不存在只丢那一份 |
+| 收集 | 生成一个 sh 脚本一次执行，逐条 `2>/dev/null`，某路径不存在只丢那一份；有 root 走 `su -c`，没有就以应用自身身份跑同一份脚本 |
 | 内容 | 设备信息（`basic.txt`）、`getprop`、`getenforce`、进程表、`dmesg`、`logcat -b all`、`mountinfo`、`/proc/modules`、`kallsyms`（临时放开 `kptr_restrict` 再还原）、tombstones / dropbox / pstore / 厂商 diag / `/data/adb/ksu/log`、`/data/adb` 清单、KernelSU 白名单与 `ksud --version` |
 | 打包 | `tar czf` 后 `chmod 0644`，文件名 `NekoSU_bugreport_yyyy-MM-dd_HH_mm.tar.gz`，放在 `cacheDir` |
 | 保存 | 先生成再弹系统文件选择器（`CreateDocument("application/gzip")`），取消或写完都会删掉缓存里的临时包，不留 0 字节文件 |
 | 分享 | `FileProvider`（`${applicationId}.fileprovider`，只暴露 `cache-path`）转成 `content://`，走 `ACTION_SEND` chooser |
-| 反馈 | 收集期间有不可取消的进度弹窗；失败弹窗区分「没 root」（`su` 起不来）与「命令超时」，不会静默失败 |
+| 无 root | 不失败：设备信息、SELinux、进程表、`getprop`、自身 logcat 照旧收集；dmesg、`/data/adb`、tombstones 等读不到的 0 字节输出会被删掉并写进 `missing.txt`，导出前弹窗说明缺了几项，用户可继续或取消 |
+| 反馈 | 收集期间有不可取消的进度弹窗；真正的失败（脚本起不来、打包失败、超时）才报错，不会静默失败 |
 
 `su` 走 `data/RootShell.kt`，自己按截止时间轮询读取输出并 `destroy()`，避免某些 ROM 上 `dmesg`
-挂住把界面一起拖死；单次输出上限 4 MB。
+挂住把界面一起拖死；单次输出上限 4 MB。`isRootAvailable()` 先跑一次 `su -c id -u`（会被拒绝、超时、没有 su
+都算无 root），之后无 root 分支用 `execAsUser()`（`sh -c`，不经 su）执行收集与打包。
+`basic.txt` 里记了 `Root: yes/no`，看报告的人一眼能知道这份日志是哪种身份收集的。
