@@ -22,9 +22,14 @@ import ui.feice.mochi.navigation.MochiLazyLargeTitleScaffold
 /**
  * 设置：更新、外观、功能开关、高级选项和关于。所有开关都是本地状态，
  * 结构对齐 KernelSU Manager 的 Mochi 设置页。
+ *
+ * 「主题」是唯一真实生效的入口，点进 [ThemeScreen]；其余条目仍是移植中的占位。
  */
 @Composable
-fun SettingsScreen(modifier: Modifier = Modifier) {
+fun SettingsScreen(
+    onOpenTheme: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     var checkUpdate by rememberSaveable { mutableStateOf(true) }
     var checkModuleUpdate by rememberSaveable { mutableStateOf(true) }
     var uiMode by rememberSaveable { mutableIntStateOf(0) }
@@ -74,7 +79,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                     subtitle = stringResource(R.string.settings_theme_summary),
                     leading = { KsuTile("color-palette", KsuTileColors.Indigo) },
                     chevron = true,
-                    onClick = {},
+                    onClick = onOpenTheme,
                 )
             }
         }

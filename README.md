@@ -30,13 +30,14 @@ app/src/main/kotlin/com/nekosu/manager/
 ├── data/AppGroups.kt        按 uid 归并应用（共享 uid 组、代表应用、属主名）
 ├── data/SuProfile.kt        按 uid 的超级用户配置（本地 JSON 存储，含旧包名数据迁移）
 ├── data/DeviceInfo.kt       真实设备信息采集 + 启动预热缓存（首帧即完整）
+├── data/AppearanceSettings.kt 外观设置（玻璃材质开关，settings 偏好持久化）
 ├── data/MockData.kt         仍为假数据的部分（5 个模块、KernelSU 运行状态）
 ├── ui/MochiRoot.kt          底部四 Tab 容器
 ├── ui/home/                 首页
 ├── ui/superuser/            超级用户（真实应用列表）
 ├── ui/profile/              应用配置页（是否放行 / uid / gid / 附加组 / 能力位 / SELinux）
 ├── ui/module/               模块
-├── ui/settings/             设置
+├── ui/settings/             设置（SettingsFlow → 主题设置 ThemeScreen）
 ├── ui/mochi/Bits.kt         图标色块 / 开关行 / 应用图标占位
 └── ui/theme/                Mochi 配色、字体、主题入口
 ```
@@ -50,6 +51,8 @@ app/src/main/kotlin/com/nekosu/manager/
 - 共享 uid 的应用合并为一行，配置按 uid 存取，组内所有包共用（见下文）；
 - 应用配置页已移植（点击超级用户列表任意一行进入）；模块仓库、安装/刷写、外观、Sulog、关于、WebUI 尚未移植。
 - 二级页面用 `MochiNavHost`：iOS 侧推转场 + 跟手侧滑返回（预测性返回），路由在 `ui/superuser/SuperUserFlow.kt`。
+- 设置 → 主题是真实页面：玻璃开关切换 `MochiTheme` 的 materials（tab bar、顶栏按钮、菜单、弹窗
+  一起换），值存在 `settings` 偏好里，重启保留；其余设置条目仍是移植中的占位。
 - 超级用户页走**下拉刷新**：`MochiLazyLargeTitleScaffold(onRefresh = ...)`，`onRefresh` 内直接完成加载
   （`ui/superuser/RefreshGate.kt`），保证最短展示 350ms、最长 15s 必返回，读列表失败只保留旧数据、不影响收起。
 - 依赖 `io.github.feice11:mochi-compose:0.3.0`，其 `com.kyant:capsule` 为 Java 21 字节码，

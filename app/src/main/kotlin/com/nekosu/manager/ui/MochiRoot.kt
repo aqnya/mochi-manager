@@ -5,7 +5,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.dp
 import com.nekosu.manager.ui.home.HomeScreen
 import com.nekosu.manager.ui.module.ModuleScreen
-import com.nekosu.manager.ui.settings.SettingsScreen
+import com.nekosu.manager.ui.settings.SettingsFlow
 import com.nekosu.manager.ui.superuser.SuperUserFlow
 import kotlinx.collections.immutable.toImmutableList
 import ui.feice.mochi.basic.MochiTabBarDefaults
@@ -52,7 +52,7 @@ fun MochiRoot() {
             0 -> HomeScreen(onOpenTab = { tabState.select(it) })
             1 -> SuperUserFlow()
             2 -> ModuleScreen()
-            else -> SettingsScreen()
+            else -> SettingsFlow()
         }
     }
 }

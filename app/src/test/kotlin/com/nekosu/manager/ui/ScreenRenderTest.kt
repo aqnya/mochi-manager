@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.nekosu.manager.data.AppearanceSettings
 import com.nekosu.manager.data.InstalledApp
 import com.nekosu.manager.data.groupApps
 import com.nekosu.manager.data.SuProfile
@@ -18,6 +19,7 @@ import com.nekosu.manager.ui.home.HomeScreen
 import com.nekosu.manager.ui.module.ModuleScreen
 import com.nekosu.manager.ui.profile.AppProfileScreen
 import com.nekosu.manager.ui.settings.SettingsScreen
+import com.nekosu.manager.ui.settings.ThemeScreen
 import com.nekosu.manager.ui.superuser.SuperUserScreen
 import com.nekosu.manager.ui.theme.NekoSUTheme
 import java.io.File
@@ -54,6 +56,8 @@ class ScreenRenderTest {
 
     @Before
     fun seedPackages() {
+        // 截图固定用不透明材质，避免上一个用例开的玻璃影响这一张
+        AppearanceSettings.get(context).updateGlass(false)
         val pm = context.packageManager
         // 后两个包共享 uid（模拟小米服务套件），列表里应合成一行
         listOf(
@@ -135,5 +139,18 @@ class ScreenRenderTest {
     fun modules() = render("modules") { ModuleScreen() }
 
     @Test
-    fun settings() = render("settings") { SettingsScreen() }
+    fun settings() = render("settings") { SettingsScreen(onOpenTheme = {}) }
+
+    @Test
+    fun theme() = render("theme") { ThemeScreen(onBack = {}) }
+
+    @Test
+    fun glass() {
+        AppearanceSettings.get(context).updateGlass(true)
+        try {
+            render("glass") { SuperUserScreen(onOpenApp = {}) }
+        } finally {
+            AppearanceSettings.get(context).updateGlass(false)
+        }
+    }
 }

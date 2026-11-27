@@ -110,6 +110,15 @@
     <string name="settings_ui_mode">界面风格</string>
     <string name="settings_theme">主题</string>
     <string name="settings_theme_summary">配色、字体、圆角与动效</string>
+    <string name="theme_section_materials">材质</string>
+    <string name="theme_glass">玻璃材质</string>
+    <string name="theme_glass_summary">标签栏、顶栏按钮、菜单与弹窗</string>
+    <string name="theme_glass_footer">玻璃会实时采样背后的页面，GPU 与耗电略高；低版本系统会自动回退成半透明材质。</string>
+    <string name="theme_glass_state_on">当前使用玻璃材质。</string>
+    <string name="theme_glass_state_off">当前使用不透明材质。</string>
+    <string name="theme_glass_warning_title">开启玻璃材质？</string>
+    <string name="theme_glass_warning_message">玻璃材质每帧都要采样背后的页面，GPU 与耗电会略高。可以在这里随时关闭。</string>
+    <string name="theme_glass_enable">开启</string>
     <string name="settings_sucompat">Root 兼容模式</string>
     <string name="settings_mode_enable_by_default">默认启用</string>
     <string name="settings_mode_disable_until_reboot">重启前禁用</string>
