@@ -40,6 +40,7 @@ import com.nekosu.manager.ui.mochi.KsuTileColors
 import com.nekosu.manager.ui.mochi.MochiFootnote
 import com.nekosu.manager.ui.mochi.RepoIcon
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import ui.feice.mochi.basic.MochiBarGroup
@@ -49,6 +50,8 @@ import ui.feice.mochi.basic.MochiButtonStyle
 import ui.feice.mochi.basic.MochiDialog
 import ui.feice.mochi.basic.MochiDialogAction
 import ui.feice.mochi.basic.MochiDialogActionRole
+import ui.feice.mochi.basic.MochiDropdown
+import ui.feice.mochi.basic.MochiItem
 import ui.feice.mochi.basic.Text
 import ui.feice.mochi.icons.MochiIonicon
 import ui.feice.mochi.list.MochiListCard
@@ -149,6 +152,9 @@ fun ModuleRepoDetailScreen(
 
     val current = detail
     val release = current?.stableRelease
+    // 用户自选的版本；未选时按稳定版。changelog、安装与确认对话框都跟随这个选择。
+    var selectedRelease by remember(current?.module?.id) { mutableStateOf<RepoRelease?>(null) }
+    val chosen = selectedRelease ?: release
 
     MochiLazyCompactTitleScaffold(
         title = module.name,
@@ -234,7 +240,9 @@ fun ModuleRepoDetailScreen(
             MochiListSection(header = stringResource(R.string.repo_section_install)) {
                 InstallBlock(
                     module = module,
-                    release = release,
+                    releases = current?.releases.orEmpty(),
+                    selected = chosen,
+                    onSelect = { selectedRelease = it },
                     phase = phase,
                     onInstall = { confirm = true },
                     onOpenWeb = { open(current?.webUrl) },
@@ -284,25 +292,29 @@ fun ModuleRepoDetailScreen(
             item(key = "release") {
                 MochiListSection(
                     header = stringResource(R.string.repo_section_release),
-                    footer = release?.let { stringResource(R.string.repo_release_footer, formatSize(it.zipSize)) },
+                    footer = chosen?.let { stringResource(R.string.repo_release_footer, formatSize(it.zipSize)) },
                 ) {
-                    if (release == null) {
+                    if (chosen == null) {
                         MochiListRow(stringResource(R.string.repo_no_changelog), enabled = false)
                     } else {
                         Column(Modifier.fillMaxWidth().padding(MochiListDefaults.RowPadding)) {
                             Text(
-                                release.name.ifBlank { release.tag },
+                                chosen.name.ifBlank { chosen.tag },
                                 style = MochiTheme.textStyles.subhead.copy(fontWeight = FontWeight.SemiBold),
                                 color = MochiTheme.colorScheme.onSurface,
                             )
                             Text(
-                                stringResource(R.string.repo_release_meta, release.version, formatDate(module.releaseEpochMillis)),
+                                stringResource(
+                                    R.string.repo_release_meta,
+                                    chosen.version,
+                                    formatIsoDate(chosen.publishedAt, module.releaseEpochMillis),
+                                ),
                                 modifier = Modifier.padding(top = 2.dp),
                                 style = MochiTheme.textStyles.footnote,
                                 color = MochiTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(
-                                release.changelog?.takeIf { it.isNotBlank() } ?: stringResource(R.string.repo_no_changelog),
+                                chosen.changelog?.takeIf { it.isNotBlank() } ?: stringResource(R.string.repo_no_changelog),
                                 modifier = Modifier.padding(top = 10.dp),
                                 style = MochiTheme.textStyles.subhead,
                                 color = MochiTheme.colorScheme.onSurfaceVariant,
@@ -332,7 +344,7 @@ fun ModuleRepoDetailScreen(
         }
     }
 
-    val target = release
+    val target = chosen
     MochiDialog(
         visible = confirm && target != null,
         onDismissRequest = { confirm = false },
@@ -358,11 +370,13 @@ fun ModuleRepoDetailScreen(
     )
 }
 
-/** 安装区：按钮 + 当前阶段说明；脚本类条目换成「在网页运行」。 */
+/** 安装区：版本选择 + 按钮 + 当前阶段说明；脚本类条目换成「在网页运行」。 */
 @Composable
 private fun InstallBlock(
     module: RepoModule,
-    release: RepoRelease?,
+    releases: List<RepoRelease>,
+    selected: RepoRelease?,
+    onSelect: (RepoRelease) -> Unit,
     phase: InstallPhase,
     onInstall: () -> Unit,
     onOpenWeb: () -> Unit,
@@ -384,7 +398,7 @@ private fun InstallBlock(
                 ) { Text(stringResource(R.string.repo_open_web)) }
             }
 
-            release == null -> {
+            selected == null -> {
                 Text(
                     stringResource(R.string.repo_no_release),
                     style = MochiTheme.textStyles.subhead,
@@ -393,11 +407,37 @@ private fun InstallBlock(
             }
 
             else -> {
+                // 版本选择：mochi 融球菜单，从当前版本按钮长出，按住滑选切换版本
+                var versionsExpanded by remember { mutableStateOf(false) }
+                MochiDropdown(
+                    expanded = versionsExpanded,
+                    onExpandedChange = { versionsExpanded = it },
+                    items =
+                        releases.map { item ->
+                            MochiItem(if (item.prerelease) "v${item.version}（预览）" else "v${item.version}")
+                        }.toImmutableList(),
+                    onItemClick = { index -> onSelect(releases[index]) },
+                    selectedIndex = releases.indexOfFirst { it == selected },
+                    buttonMinHeight = 44.dp,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        MochiIonicon("git-branch", size = 16.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "v${selected.version}",
+                            style = MochiTheme.textStyles.body,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        MochiIonicon("chevron-down", size = 14.dp)
+                    }
+                }
                 MochiButton(
                     onClick = onInstall,
                     style = MochiButtonStyle.Filled,
                     enabled = !busy,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.padding(top = 12.dp).fillMaxWidth(),
                 ) {
                     MochiIonicon("cloud-download", size = 18.dp)
                     Spacer(Modifier.width(8.dp))
@@ -410,7 +450,7 @@ private fun InstallBlock(
                     )
                 }
                 Text(
-                    stringResource(R.string.repo_install_subtitle, formatSize(release.zipSize)),
+                    stringResource(R.string.repo_install_subtitle, formatSize(selected.zipSize)),
                     modifier = Modifier.padding(top = 8.dp),
                     style = MochiTheme.textStyles.footnote,
                     color = cs.onSurfaceVariant,
@@ -471,3 +511,8 @@ internal fun formatDate(epochMillis: Long): String {
     val format = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
     return format.format(Date(epochMillis))
 }
+
+/** Release 的 ISO 8601 时间 → 本地日期；解析失败回退到索引里的稳定版时间。 */
+internal fun formatIsoDate(iso: String, fallbackEpochMillis: Long): String =
+    runCatching { formatDate(java.time.Instant.parse(iso).toEpochMilli()) }
+        .getOrElse { formatDate(fallbackEpochMillis) }

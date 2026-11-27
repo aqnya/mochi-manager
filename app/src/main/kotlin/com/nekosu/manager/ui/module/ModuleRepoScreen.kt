@@ -231,7 +231,7 @@ fun ModuleRepoScreen(
     }
 }
 
-/** 一行模块：图标 + 名称 + 摘要，右侧版本 / 星标。 */
+/** 一行模块：图标 + 名称 + 摘要，右侧星标 + 缩略版本号。 */
 @Composable
 private fun RepoRow(
     module: RepoModule,
@@ -253,13 +253,32 @@ private fun RepoRow(
                     )
                 }
                 if (module.version.isNotBlank()) {
-                    Text(module.version, style = MochiTheme.textStyles.footnote, color = cs.onSurfaceVariant)
+                    // 完整版本号（带 hash、构建号）会把标题挤成「Z…」，右侧只放缩略版
+                    Text(
+                        shortVersion(module.version),
+                        style = MochiTheme.textStyles.footnote,
+                        color = cs.onSurfaceVariant,
+                        maxLines = 1,
+                    )
                 }
             }
         },
         chevron = true,
         onClick = onClick,
     )
+}
+
+/**
+ * 版本号缩略：去掉括号里的 hash / 构建信息与 `+` 后的元数据，只留版本本体。
+ * `v2.22.01 (458-952f973)` → `v2.22.01`；仍超长时按省略号截断。
+ */
+internal fun shortVersion(version: String): String {
+    val body =
+        version
+            .substringBefore('(')
+            .substringBefore('+')
+            .trim()
+    return if (body.length > 16) body.take(15) + "…" else body.ifBlank { version }
 }
 
 private fun checkIcon(on: Boolean): (@Composable (androidx.compose.ui.graphics.Color) -> Unit)? =
