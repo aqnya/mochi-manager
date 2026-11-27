@@ -1,14 +1,26 @@
 package com.nekosu.manager.ui.webui
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -28,34 +40,32 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.webkit.WebViewAssetLoader
+import com.nekosu.manager.R
 import kotlinx.collections.immutable.persistentListOf
+import ui.feice.mochi.basic.MochiActivityIndicator
 import ui.feice.mochi.basic.MochiDialog
 import ui.feice.mochi.basic.MochiDialogAction
 import ui.feice.mochi.basic.MochiDialogActionRole
-import com.nekosu.manager.R
-import androidx.compose.ui.res.stringResource
 import ui.feice.mochi.basic.MochiTextField
+import ui.feice.mochi.theme.MochiDefaults
+import ui.feice.mochi.theme.MochiTheme
 
 private const val TAG = "NekoSU/WebUI"
-
-/** 布局就绪后的加载入口；记一条日志方便从 bugreport 直接看出加载时机与尺寸。 */
-private fun WebView.loadWhenLaidOut(
-    url: String,
-    webUIState: WebUIState,
-) {
-    if (webUIState.isUrlLoaded) return
-    Log.i(TAG, "loadUrl $url width=$width height=$height")
-    loadUrl(url)
-    webUIState.isUrlLoaded = true
-}
 
 @Composable
 private fun rememberFileLauncher(webUIState: WebUIState) =
@@ -72,9 +82,18 @@ private fun rememberFileLauncher(webUIState: WebUIState) =
         webUIState.onFileChooserResult(uris)
     }
 
-/** WebView 本体 + Mochi 皮肤的 alert/confirm/prompt/文件选择。 */
+/**
+ * WebView 本体 + Mochi 皮肤的 alert/confirm/prompt/文件选择。
+ *
+ * 结构对齐上游：WebView 在组合期 `remember` 创建并直接挂载（不放在 Crossfade /
+ * alpha 动画容器里——动画层会吞掉 WebView 的首帧合成，页面跑着但不出画面）；
+ * 加载圈只是叠加在 WebView 上层，由 onPageFinished / 主框架错误收起；
+ * 拿到非零布局尺寸后才 loadUrl，SPA 按 0×0 视口渲染只会得到空白。
+ */
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun WebUIScreen(webUIState: WebUIState) {
+    val context = LocalContext.current
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
     val deviceInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout)
@@ -87,26 +106,160 @@ fun WebUIScreen(webUIState: WebUIState) {
         }
     val fileLauncher = rememberFileLauncher(webUIState)
 
-    // 全屏模式下把 insets 换算成 px 持续下发；模块页读 --safe-area-inset-* 排版
-    LaunchedEffect(density, layoutDirection, deviceInsets, webUIState.isInsetsEnabled) {
-        if (!webUIState.isInsetsEnabled) return@LaunchedEffect
-        snapshotFlow {
-            WebInsets(
-                top = (deviceInsets.getTop(density) / density.density).toInt(),
-                bottom = (deviceInsets.getBottom(density) / density.density).toInt(),
-                left = (deviceInsets.getLeft(density, layoutDirection) / density.density).toInt(),
-                right = (deviceInsets.getRight(density, layoutDirection) / density.density).toInt(),
-            )
-        }.collect { newInsets ->
-            if (webUIState.currentInsets != newInsets) {
-                webUIState.currentInsets = newInsets
-                webUIState.webView?.evaluateJavascript(newInsets.js, null)
+    var loading by remember { mutableStateOf(true) }
+    var urlLoaded by remember { mutableStateOf(false) }
+
+    // WebView 背景用主题底色而不是透明：透明背景在部分设备（HyperOS + WebView 157
+    // 实测）上合成器不出首帧，页面加载正常但整屏只剩 Compose 背景透上来
+    val webViewBackground = MochiTheme.colorScheme.background.toArgb()
+
+    val modDir = webUIState.modDir
+    val webRoot = remember(modDir) { java.io.File("$modDir/webroot") }
+
+    val webView =
+        remember(modDir) {
+            WebView(context).apply {
+                layoutParams =
+                    ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
+                setBackgroundColor(webViewBackground)
+                settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    allowFileAccess = false
+                }
+
+                val assetLoader =
+                    WebViewAssetLoader.Builder()
+                        .setDomain(WEB_DOMAIN)
+                        .addPathHandler("/", SuFilePathHandler(webRoot) { webUIState.currentInsets })
+                        .build()
+
+                webViewClient =
+                    object : WebViewClient() {
+                        override fun shouldInterceptRequest(
+                            view: WebView,
+                            request: WebResourceRequest,
+                        ): WebResourceResponse? = assetLoader.shouldInterceptRequest(request.url)
+
+                        override fun doUpdateVisitedHistory(
+                            view: WebView?,
+                            url: String?,
+                            isReload: Boolean,
+                        ) {
+                            webUIState.webCanGoBack = view?.canGoBack() ?: false
+                            if (webUIState.isInsetsEnabled) {
+                                view?.evaluateJavascript(webUIState.currentInsets.js, null)
+                            }
+                            super.doUpdateVisitedHistory(view, url, isReload)
+                        }
+
+                        override fun onPageFinished(
+                            view: WebView,
+                            url: String,
+                        ) {
+                            loading = false
+                            // 诊断：页面内容与视口尺寸，白屏排查时直接看这条就知道
+                            // 内容是否进来、视口是不是 0×0
+                            view.evaluateJavascript(
+                                "(function(){try{var b=document.body;return (b?b.innerText.length:-1)+'/'+" +
+                                    "(b?b.innerHTML.length:-1)+' viewport='+window.innerWidth+'x'+window.innerHeight;}catch(e){return 'err:'+e;}})()",
+                            ) { result -> Log.i(TAG, "dom=$result") }
+                        }
+
+                        override fun onReceivedError(
+                            view: WebView,
+                            request: WebResourceRequest,
+                            error: WebResourceError,
+                        ) {
+                            if (request.isForMainFrame) {
+                                loading = false
+                                Log.w(TAG, "主框架加载失败 code=${error.errorCode}: ${error.description} url=${request.url}")
+                            }
+                            super.onReceivedError(view, request, error)
+                        }
+
+                        override fun onRenderProcessGone(
+                            view: WebView,
+                            detail: RenderProcessGoneDetail,
+                        ): Boolean {
+                            Log.e(TAG, "WebView 渲染进程崩溃 didCrash=${detail.didCrash()}")
+                            return false
+                        }
+                    }
+
+                webChromeClient =
+                    object : WebChromeClient() {
+                        override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                            Log.i(
+                                TAG,
+                                "JS ${consoleMessage.messageLevel()}: ${consoleMessage.message()} " +
+                                    "(${consoleMessage.sourceId()}:${consoleMessage.lineNumber()})",
+                            )
+                            return true
+                        }
+                        override fun onJsAlert(
+                            view: WebView?,
+                            url: String?,
+                            message: String?,
+                            result: JsResult?,
+                        ): Boolean {
+                            if (message == null || result == null) return false
+                            webUIState.uiEvent = WebUIEvent.ShowAlert(message, result)
+                            return true
+                        }
+
+                        override fun onJsConfirm(
+                            view: WebView?,
+                            url: String?,
+                            message: String?,
+                            result: JsResult?,
+                        ): Boolean {
+                            if (message == null || result == null) return false
+                            webUIState.uiEvent = WebUIEvent.ShowConfirm(message, result)
+                            return true
+                        }
+
+                        override fun onJsPrompt(
+                            view: WebView?,
+                            url: String?,
+                            message: String?,
+                            defaultValue: String?,
+                            result: JsPromptResult?,
+                        ): Boolean {
+                            if (message == null || result == null || defaultValue == null) return false
+                            webUIState.uiEvent = WebUIEvent.ShowPrompt(message, defaultValue, result)
+                            return true
+                        }
+
+                        override fun onShowFileChooser(
+                            webView: WebView?,
+                            filePathCallback: ValueCallback<Array<android.net.Uri>>?,
+                            fileChooserParams: FileChooserParams?,
+                        ): Boolean {
+                            webUIState.filePathCallback?.onReceiveValue(null)
+                            webUIState.filePathCallback = filePathCallback
+                            val intent =
+                                fileChooserParams?.createIntent()
+                                    ?: Intent(Intent.ACTION_GET_CONTENT).apply { type = "*/*" }
+                            if (fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                            }
+                            webUIState.uiEvent = WebUIEvent.ShowFileChooser(intent)
+                            return true
+                        }
+                    }
+
+                addJavascriptInterface(WebViewInterface(webUIState), "ksu")
+                webUIState.webView = this
             }
         }
-    }
 
-    BackHandler(enabled = webUIState.webCanGoBack) {
-        webUIState.webView?.goBack()
+    // 普通返回：有历史就后退，没有就退出（对齐上游）
+    BackHandler(enabled = true) {
+        if (webView.canGoBack()) webView.goBack() else webUIState.requestExit()
     }
 
     Box(
@@ -115,50 +268,31 @@ fun WebUIScreen(webUIState: WebUIState) {
                 .fillMaxSize()
                 .padding(innerPadding),
     ) {
-        webUIState.webView?.let { webView ->
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { _ ->
-                    webView.apply {
-                        layoutParams =
-                            ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                            )
-                        // loadUrl 必须等 WebView 有了真实尺寸：factory 阶段宽高还是 0，
-                        // 提前加载会让 Chromium 的首帧绘制抑制卡死，页面已运行但永远
-                        // 不出画面（白屏）。和上游一样挂布局监听再加载。
-                        if (!webUIState.isUrlLoaded) {
-                            val homePage = "https://" + WEB_DOMAIN + "/index.html"
-                            if (width > 0 && height > 0) {
-                                loadWhenLaidOut(homePage, webUIState)
-                            } else {
-                                addOnLayoutChangeListener(
-                                    object : android.view.View.OnLayoutChangeListener {
-                                        override fun onLayoutChange(
-                                            v: android.view.View,
-                                            left: Int,
-                                            top: Int,
-                                            right: Int,
-                                            bottom: Int,
-                                            oldLeft: Int,
-                                            oldTop: Int,
-                                            oldRight: Int,
-                                            oldBottom: Int,
-                                        ) {
-                                            if (v.width > 0 && v.height > 0) {
-                                                v.removeOnLayoutChangeListener(this)
-                                                (v as WebView).loadWhenLaidOut(homePage, webUIState)
-                                            }
-                                        }
-                                    },
-                                )
-                            }
+        AndroidView(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .onSizeChanged { size ->
+                        if (!urlLoaded && size.width > 0 && size.height > 0) {
+                            urlLoaded = true
+                            Log.i(TAG, "loadUrl $WEB_HOME_URL width=${size.width} height=${size.height}")
+                            webView.loadUrl(WEB_HOME_URL)
                         }
-                    }
-                },
-                update = { view -> view.requestLayout() },
-            )
+                    },
+            factory = { webView },
+            update = { it.requestLayout() },
+        )
+
+        if (loading) {
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .background(MochiDefaults.groupedBackground()),
+                contentAlignment = Alignment.Center,
+            ) {
+                MochiActivityIndicator(size = 28.dp)
+            }
         }
     }
 

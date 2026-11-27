@@ -46,7 +46,8 @@ sealed class WebUIEvent {
 /**
  * WebUIActivity 的状态持有者。
  *
- * WebView 在 prepareWebView 里建好，页面只订阅 [uiEvent]；JsResult 必须回一次
+ * WebView 在 [com.nekosu.manager.ui.webui.WebUIScreen] 组合期建好并直接挂载，
+ * 页面只订阅 [uiEvent]；JsResult 必须回一次
  * confirm/cancel，否则 JS 侧的 alert/confirm/prompt 永远挂起，这里把回填都收拢到
  * 对应的 onXxxResult，Mochi 弹窗只管触发。
  */
@@ -58,7 +59,6 @@ class WebUIState {
     var moduleName: String = ""
 
     var uiEvent by mutableStateOf<WebUIEvent>(WebUIEvent.Loading)
-    var isUrlLoaded = false
 
     /** fullScreen(true) 之后由 Compose 侧把 insets 换算好写进来。 */
     @Volatile
