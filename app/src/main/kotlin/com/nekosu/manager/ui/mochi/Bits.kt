@@ -11,14 +11,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -148,22 +151,33 @@ fun AppIcon(
     accent: Color,
     size: Dp = 36.dp,
 ) {
-    val context = LocalContext.current
-    val icon by produceState(AppIcons.cached(packageName), packageName) {
-        if (value == null) value = AppIcons.load(context, packageName)
-    }
-    val bitmap = icon
-    if (bitmap != null) {
-        Image(
-            bitmap = bitmap,
-            contentDescription = null,
-            modifier =
-                Modifier
-                    .size(size)
-                    .clip(MochiRoundedRectangle(size * 0.26f)),
-        )
-    } else {
-        AppIconBadge(label, accent, size)
+    // 同一个组合位置切换到另一个应用（列表行复用、连续打开两个授权页）时，
+    // produceState 会保留上一份 value：新应用会先显示旧图标，而且因为 value 非空
+    // 会跳过加载，一直停在旧图标上。用 key 强制重建这段状态，producer 里也重新取值。
+    key(packageName) {
+        val context = LocalContext.current
+        val icon by produceState<ImageBitmap?>(AppIcons.cached(packageName), packageName) {
+            value = AppIcons.cached(packageName)
+            if (value == null) value = AppIcons.load(context, packageName)
+        }
+        Box(
+            Modifier.size(size).testTag("app-icon-$packageName"),
+            contentAlignment = Alignment.Center,
+        ) {
+            val bitmap = icon
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = null,
+                    modifier =
+                        Modifier
+                            .size(size)
+                            .clip(MochiRoundedRectangle(size * 0.26f)),
+                )
+            } else {
+                AppIconBadge(label, accent, size)
+            }
+        }
     }
 }
 
