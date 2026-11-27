@@ -34,9 +34,14 @@ fun RebootMenu() {
     val scope = rememberCoroutineScope()
     var expanded by remember { mutableStateOf(false) }
     // PowerManager 能力是系统常量，进程内不会变，菜单项一次性算好
-    @Suppress("DEPRECATION")
     val pm = remember { context.getSystemService(Context.POWER_SERVICE) as PowerManager? }
-    val targets = remember { Reboot.targets(pm?.isRebootingUserspaceSupported == true) }
+    // API 37 起平台废弃了 userspace reboot，这个方法在新系统上恒返回 false 且没有替代 API；
+    // 但 API 24–36 的设备仍靠它判断能力，所以保留调用并显式压制弃用警告。
+    val targets =
+        remember {
+            @Suppress("DEPRECATION")
+            Reboot.targets(pm?.isRebootingUserspaceSupported == true)
+        }
     val items =
         remember(targets) {
             targets.map { MochiItem(context.getString(it.labelRes)) }.toImmutableList()

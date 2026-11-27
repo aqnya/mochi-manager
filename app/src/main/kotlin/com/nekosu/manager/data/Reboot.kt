@@ -22,7 +22,8 @@ enum class RebootTarget(
 object Reboot {
     /**
      * 按设备能力筛出菜单项。「重启到用户空间」依赖 `PowerManager
-     * .isRebootingUserspaceSupported`，不支持的机器上发这个 reason 只会得到
+     * .isRebootingUserspaceSupported`——API 37 起平台废弃了 userspace reboot，
+     * 该方法在新系统上恒返回 false；不支持的机器上发这个 reason 只会得到
      * 一个开不了机的黑屏，所以没有这项时直接从菜单里去掉。
      */
     fun targets(userspaceSupported: Boolean): List<RebootTarget> =
