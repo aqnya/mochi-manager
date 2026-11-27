@@ -12,6 +12,7 @@
 #   ANDROID_NDK_HOME        NDK 路径（默认 /opt/android-sdk/ndk/27.2.12479018）
 #   NKSU_MANAGER_CERTHASH   管理器签名证书 SHA-256（64 位 hex）。ncore 拿它在
 #                           packages.xml 里找管理器包；留空则只认显式传入的 hash。
+#                           默认值是本仓库 release keystore 的证书指纹，换签名时覆盖它。
 #   SIGNING_KEY / SIGNING_PASSWORD
 #                           可选：ncore 镜像的 RSA-4096 私钥与口令。内核只加载
 #                           尾部带有效签名的 ncore；没有私钥时产物仍可当 CLI 用，
@@ -42,7 +43,7 @@ export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC"
 # bindgen 生成 uapi 绑定时要用 Android 的 sysroot，否则会去翻宿主机的
 # /usr/include/linux/ioctl.h，接着找不到 asm/ioctl.h（架构头在 NDK 里）。
 export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--target=${TARGET}${API} --sysroot=$SYSROOT -I$SYSROOT/usr/include/$TARGET"
-export NKSU_MANAGER_CERTHASH=${NKSU_MANAGER_CERTHASH:-}
+export NKSU_MANAGER_CERTHASH=${NKSU_MANAGER_CERTHASH:-ce69488700849f24df4ec9cbf7c88652d45749bc68df3981003308d221d5969f}
 
 rustup target add "$TARGET" >/dev/null 2>&1 || true
 

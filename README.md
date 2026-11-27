@@ -77,30 +77,63 @@ app/src/main/cpp/           本工程自己的 JNI 桥（C++）
 ### ncore 的编译与部署
 
 ```sh
-NKSU_MANAGER_CERTHASH=<管理器签名证书 SHA-256> ./neko/build-ncore.sh
+./neko/build-ncore.sh                    # 用内置的证书指纹
+NKSU_MANAGER_CERTHASH=<hex> ./neko/build-ncore.sh   # 换签名时覆盖
 ```
 
+证书指纹默认内置为本仓库 release keystore 的 SHA-256（`ce6948…969f`），换签名只需改这个变量。
 脚本用 NDK clang 交叉编译（`aarch64-linux-android`，API 31），产物直接放到
 `app/src/main/jniLibs/arm64-v8a/libncore.so`。它其实是**可执行文件顶着 .so 的名字**：
 内核要按 `/data/app/<pkg>/lib/arm64-v8a/libncore.so` 这个路径引导它，所以 APK 里必须解压成真实文件
 （`packaging.jniLibs.useLegacyPackaging = true`）。
 
-首次做 root 操作时 `Ncore.ensureInstalled()` 把它复制到 `/data/adb/ncore` 并跑一次
-`ncore install`，由 ncore 自己铺开 `/data/adb/nksu/bin`。
+首次启动时 `Ncore.ensureInstalled()` 分两步：先 `cp` 到 `/data/adb/ncore` 并跑 `ncore install`
+（铺开 `/data/adb/nksu/bin`），再跑 `ncore manager scan`（把本应用 uid 交给内核认成 manager）。
+第二步失败不阻断部署，只是授权读不到内核数据、退回本地表。
+
+> 首次部署的前提是设备上已经有一个可用的 `su`：`su` 由内核 hook 重定向到 `/data/adb/ncore`，
+> ncore 不在时 su 自己也起不来，这一步没法自举。全新设备请先用已签名的官方 ncore 引导，
+> 或从 recovery / adb 手动把 `libncore.so` 放到 `/data/adb/ncore`。
+
+### 安装状态
+
+首页状态卡不再有任何编译期常量：`data/NekoStatus.kt` 的 `NekoStatusRepository` 是唯一来源。
+
+| 字段 | 来源 |
+| --- | --- |
+| 内核版本 | `IOC_GET_VERSION`（`NekoKernel.version()`），读不到即 null |
+| ncore | `su -c test -x /data/adb/ncore`，su 起不来记 Unknown |
+| 模块数 | `ncore module list --json` 的条数，内核通道不通时为 null |
+
+据此分四态：`Checking`（还没探完）/ `Active`（通道可用）/ `Detached`（ncore 在但没连上内核）
+/ `Absent`（都没有，探测失败也算这一态）。未安装时状态卡显示「未安装」，模块计数显示「—」，
+不会再出现写死的「运行中 v1.1.0-12851 / GKI」。
 
 ### 签名约束
 
-内核只把「尾部带有效 RSA-4096 签名」的 ncore 当作可信调用者（`nksu_ncore_verify_caller`），
-签名私钥和 `NKSU_MANAGER_CERTHASH` 都是上游 CI 的 secret，不在仓库里。因此：
+内核通过两层检查决定「谁能当管理器」：
+
+| 检查 | 位置 | 跳过条件 |
+| --- | --- | --- |
+| ncore 镜像本身（`/data/adb/ncore`、`/data/app` 扫描到的 libncore.so） | `nksu_ncore_verify_file` | 无条件，必须带有效 RSA-4096 签名 |
+| 调用者是不是可信 ncore | `nksu_ncore_verify_caller` | `CONFIG_NKSU_DEBUG` 构建直接 `return 0` |
+
+也就是说：**debug 内核只跳过 caller 校验**，所以自签名的 ncore 也能在 `manager scan` 时
+让内核认下我们传的 uid；镜像级验签仍然存在，内核自己的 bootstrap 不会加载未签名镜像——
+但我们的部署路径是应用自己 `su -c cp` 到 `/data/adb/ncore`，不经过那一步验签。
+
+`manager scan` 读的是编译期写进 ncore 的证书指纹（`NKSU_MANAGER_CERTHASH`，默认就是本仓库
+release keystore 的证书 SHA-256），在 `packages.xml` 里找到指纹匹配的包，再把它的 uid
+交给内核。所以**换签名必须重编 ncore**，否则 `scan` 找不到包，应用不会被认定为 manager。
 
 | 场景 | 结果 |
 | --- | --- |
-| 用上游私钥 + 官方证书 hash 构建 | 内核认可 ncore，`prctl` 拿到控制 fd，授权表读写直连内核 |
-| 只设了 `NKSU_MANAGER_CERTHASH`（本仓库默认构建） | ncore 能被 `packages.xml` 找到，但没签名 → 内核不给 fd |
-| 两者都没有 | ncore 仅作为 CLI：模块安装/启停/卸载照常，授权退回本地 JSON |
+| debug 内核 + 本仓库默认构建 | `manager scan` 成功 → 应用成为 manager → `prctl` 拿到控制 fd，授权直连内核 |
+| release 内核 + 本仓库默认构建 | caller 验签失败 → 不给 fd，授权退回本地 JSON，模块 CLI 照常 |
+| release 内核 + 上游签名私钥 | 与官方管理器一致，全部走内核通道 |
 
-`NekoKernel.available` 为 false 时，`SuProfileStore` 全部走本地存储，`RootShell` 退回
-`su -c`，`ModuleInstaller` 退回 `ksud`——不会因为缺内核模块就假装成功。
+`NekoKernel.version()` 为 null 时，`SuProfileStore` 全部走本地存储，`ModuleInstaller` 退回
+`ksud`——不会因为缺内核模块就假装成功。
 
 
 ## 说明

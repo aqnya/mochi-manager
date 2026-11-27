@@ -30,11 +30,11 @@ object Ncore {
         File(context.applicationInfo.nativeLibraryDir, "libncore.so")
 
     /**
-     * 是否已按当前版本部署过。
+     * 本版本是否已经部署过（部署记录，不是安装状态）。
      *
-     * 不能用 `File("/data/adb/ncore").canExecute()` 判断：应用进程没有 /data/adb 的读权限，
-     * SELinux 会把 stat 直接拒掉，永远得到 false。这里以「上次部署时的 versionCode」为准，
-     * 升级安装后会重新部署一次。
+     * 应用进程没有 /data/adb 的读权限，SELinux 会把 stat 直接拒掉，所以这里没法用
+     * `File(BOOT_PATH).canExecute()` 判断。这个记录只用来跳过重复部署；真实的
+     * 「文件在不在」由 [com.nekosu.manager.data.NekoStatusRepository] 用 `su -c test -x` 探测。
      */
     fun isDeployed(context: Context): Boolean {
         val app = context.applicationContext
@@ -61,20 +61,39 @@ object Ncore {
 
         val quotedSrc = quote(src.absolutePath)
         val quotedDst = quote(BOOT_PATH)
-        val script =
+
+        // 第一步：把镜像放到内核引导路径，并铺开辅助程序。
+        val installScript =
             "mkdir -p /data/adb && cp -f $quotedSrc $quotedDst && chmod 755 $quotedDst && " +
                 "chcon u:object_r:ksu_file:s0 $quotedDst 2>/dev/null; $quotedDst install"
-
-        val result =
-            runCatching { RootShell.exec(script, timeoutSeconds = 90L) }
+        val install =
+            runCatching { RootShell.exec(installScript, timeoutSeconds = 90L) }
                 .getOrElse { e ->
                     Log.w(TAG, "部署 ncore 失败：${e.message}")
                     return false
                 }
-        if (result.exitCode != 0) {
-            Log.w(TAG, "ncore install 退出码 ${result.exitCode}：${result.output.take(300)}")
+        if (install.exitCode != 0) {
+            Log.w(TAG, "ncore install 退出码 ${install.exitCode}：${install.output.take(300)}")
             return false
         }
+
+        // 第二步：把自己认成 manager。ncore 会在 packages.xml 里按证书指纹找本应用，
+        // 然后把 uid 交给内核（IOC_SET_MANAGER_UID）。
+        // 内核只在 debug 构建（CONFIG_NKSU_DEBUG）里跳过 caller 的签名校验，所以自签名
+        // 的 ncore 也能拿到这一步；正式内核会拒绝，此时应用退回本地授权表，不假装成功。
+        val authorize =
+            runCatching { RootShell.exec("$quotedDst manager scan", timeoutSeconds = 60L) }
+                .getOrElse { e ->
+                    Log.w(TAG, "manager scan 未执行：${e.message}")
+                    null
+                }
+        when {
+            authorize == null -> Log.w(TAG, "manager scan 未执行，本应用可能不会被内核认定为 manager")
+            authorize.exitCode != 0 ->
+                Log.w(TAG, "manager scan 退出码 ${authorize.exitCode}：${authorize.output.take(300)}")
+            else -> Log.i(TAG, "已交由内核认定 manager：${authorize.output.take(200)}")
+        }
+
         prefs.edit().putLong(KEY_VERSION, version).apply()
         Log.i(TAG, "ncore 已就位：$BOOT_PATH")
         return true

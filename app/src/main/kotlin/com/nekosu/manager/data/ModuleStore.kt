@@ -1,6 +1,5 @@
 package com.nekosu.manager.data
 
-import android.content.Context
 import android.util.Log
 import com.nekosu.manager.neko.Ncore
 import org.json.JSONArray
@@ -18,11 +17,9 @@ import org.json.JSONObject
 object ModuleStore {
     private const val TAG = "NekoSU/Modules"
 
-    suspend fun load(context: Context): List<ModuleEntry>? {
-        if (!Ncore.isDeployed(context)) {
-            Log.i(TAG, "ncore 未部署，模块列表不可用")
-            return null
-        }
+    suspend fun load(): List<ModuleEntry>? {
+        // 不再前置判断「ncore 是否部署过」：那条记录只能说明某次部署成功过，
+        // 文件被删/被覆盖成别的东西时它会撒谎。直接问 ncore，跑不起来就是 null。
         val result =
             runCatching { Ncore.moduleListJson() }
                 .onFailure { Log.w(TAG, "执行 ncore 失败：${it.message}") }

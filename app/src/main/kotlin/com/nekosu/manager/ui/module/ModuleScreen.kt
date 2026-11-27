@@ -26,7 +26,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -59,15 +58,15 @@ import ui.feice.mochi.theme.MochiTheme
 
 /**
  * 模块：卡片列表，支持搜索、排序、启停、执行动作 / 打开 WebUI、卸载与撤销。
- * 已安装列表仍来自 [MockData.modules]（本工程没有模块数据层），启停和卸载状态在本地生效；
- * 右上角的商店按钮进入真实的模块仓库 [ModuleRepoScreen]。
+ *
+ * 列表来自 ncore 的 `module list --json`（真实的 /data/adb/modules），启停/卸载全部
+ * 写回磁盘，不在本地维护一份会跟真实状态脱节的状态；右上角的商店按钮进入模块仓库。
  */
 @Composable
 fun ModuleScreen(
     onOpenRepo: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val modules = remember { mutableStateListOf<ModuleEntry>() }
     var loading by remember { mutableStateOf(true) }
@@ -77,7 +76,7 @@ fun ModuleScreen(
     // 模块列表来自 ncore（真实的 /data/adb/modules），不再有本地假数据
     LaunchedEffect(refreshKey) {
         loading = true
-        val loaded = ModuleStore.load(context).orEmpty()
+        val loaded = ModuleStore.load().orEmpty()
         modules.clear()
         modules.addAll(loaded)
         loading = false

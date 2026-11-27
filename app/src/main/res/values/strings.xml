@@ -2,9 +2,14 @@
     <string name="app_name">NekoSU</string>
 
     <!-- 首页 -->
-    <string name="home_working">运行中</string>
-    <string name="home_working_version">%1$s</string>
-    <string name="home_new_version">发现新版本 v1.1.1，点击查看更新日志</string>
+    <string name="home_status_checking">正在检查</string>
+    <string name="home_status_checking_hint">读取内核模块与 ncore 状态…</string>
+    <string name="home_status_active">运行中</string>
+    <string name="home_status_kernel">内核 %1$s</string>
+    <string name="home_status_detached">内核模块未连接</string>
+    <string name="home_status_detached_hint">ncore 已就位，但没有拿到内核控制通道。确认已刷入 NekoSU 内核模块并重启。</string>
+    <string name="home_status_absent">未安装</string>
+    <string name="home_status_absent_hint">未检测到 NekoSU 内核模块与 ncore。</string>
     <string name="home_device_model">设备型号</string>
     <string name="home_system_version">系统版本</string>
     <string name="home_manager_version">管理器版本</string>

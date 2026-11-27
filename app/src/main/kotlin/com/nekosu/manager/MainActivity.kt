@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
 import com.nekosu.manager.data.DeviceInfoRepository
+import com.nekosu.manager.data.NekoStatusRepository
 import com.nekosu.manager.neko.Ncore
 import com.nekosu.manager.ui.MochiRoot
 import com.nekosu.manager.ui.theme.NekoSUTheme
@@ -20,8 +21,13 @@ class MainActivity : ComponentActivity() {
         // 首帧之前把设备信息取好：首页直接从缓存读，不再有「—」的中间态
         DeviceInfoRepository.preload(applicationContext)
         // 把 ncore 铺到 /data/adb：模块安装/启停、su、resetprop 都靠它。
-        // 无 root 时这里会静默失败，模块页退回空态而不是假数据。
-        lifecycleScope.launch(Dispatchers.IO) { Ncore.ensureInstalled(applicationContext) }
+        // 部署完再探一次状态，让首页看到的是部署后的真实结果，而不是部署前的快照。
+        lifecycleScope.launch(Dispatchers.IO) {
+            if (Ncore.ensureInstalled(applicationContext)) {
+                NekoStatusRepository.markDeployed()
+                NekoStatusRepository.refresh(applicationContext)
+            }
+        }
         setContent {
             NekoSUTheme {
                 MochiRoot()

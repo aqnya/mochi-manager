@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,7 +37,8 @@ import androidx.compose.ui.unit.sp
 import com.nekosu.manager.R
 import com.nekosu.manager.data.DeviceInfo
 import com.nekosu.manager.data.DeviceInfoRepository
-import com.nekosu.manager.data.MockData
+import com.nekosu.manager.data.NekoStatus
+import com.nekosu.manager.data.NekoStatusRepository
 import com.nekosu.manager.data.SuProfileStore
 import com.nekosu.manager.ui.mochi.KsuTileColors
 import com.nekosu.manager.ui.mochi.MochiCredit
@@ -61,10 +63,11 @@ import ui.feice.mochi.theme.MochiTheme
 private val HeroShape = MochiRoundedRectangle(MochiListDefaults.SectionCorner)
 
 /**
- * 首页：状态卡、提示、统计、系统信息、支持入口。
+ * 首页：状态卡、统计、系统信息、支持入口。
  *
- * 「设备信息」来自 [DeviceInfoRepository]（Build / proc / selinuxfs / PackageManager），
- * 其余仍为 [MockData]：模块列表与 KernelSU 运行状态还没有数据层。
+ * 状态卡与模块数来自 [NekoStatusRepository] 的实测结果：内核版本读
+ * `IOC_GET_VERSION`，ncore 用 `su -c test -x /data/adb/ncore` 探，模块数来自
+ * `ncore module list`。没有「已安装」的兜底值——没查到就显示未安装。
  */
 @Composable
 fun HomeScreen(
@@ -74,9 +77,12 @@ fun HomeScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(Unit) {
         SuProfileStore.init(context)
+        NekoStatusRepository.refresh(context)
+        // 内核通道可用时这份同步才会真的写进去，否则保持本地记录
         SuProfileStore.refreshFromKernel(context)
     }
     val profiles by SuProfileStore.profiles.collectAsState()
+    val status by NekoStatusRepository.state.collectAsState()
     // 启动时已预热；缓存缺失（进程被回收后重建）就同步取一次，保证首帧完整
     val device = remember { DeviceInfoRepository.current() ?: DeviceInfoRepository.loadNow(context) }
     MochiLazyLargeTitleScaffold(
@@ -90,9 +96,12 @@ fun HomeScreen(
     ) {
         item(key = "status") {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                ActiveCard()
-                Notice(stringResource(R.string.home_new_version), error = false)
-                StatsRow(onOpenTab, grantedCount = profiles.values.count { it.allowSu })
+                ActiveCard(status)
+                StatsRow(
+                    onOpenTab,
+                    grantedCount = profiles.values.count { it.allowSu },
+                    moduleCount = status.moduleCount,
+                )
             }
         }
         item(key = "info") { SystemInfoSection(device) }
@@ -103,9 +112,16 @@ fun HomeScreen(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ActiveCard() {
+private fun ActiveCard(status: NekoStatus) {
     val scheme = MochiTheme.colorScheme
-    val ok = rememberKsuTone(KsuTileColors.Green).content
+    val tone =
+        when (status.phase) {
+            NekoStatus.Phase.Active -> rememberKsuTone(KsuTileColors.Green)
+            NekoStatus.Phase.Detached -> rememberKsuTone(KsuTileColors.Orange)
+            NekoStatus.Phase.Absent -> rememberKsuTone(KsuTileColors.Gray)
+            NekoStatus.Phase.Checking -> rememberKsuTone(KsuTileColors.Gray)
+        }
+    val accent = tone.content
     val neutralBg = scheme.onSurface.copy(alpha = 0.06f)
     Row(
         Modifier
@@ -117,24 +133,39 @@ private fun ActiveCard() {
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Box(
-            Modifier.size(48.dp).clip(CircleShape).background(ok.copy(alpha = 0.12f)),
+            Modifier.size(48.dp).clip(CircleShape).background(accent.copy(alpha = 0.12f)),
             contentAlignment = Alignment.Center,
         ) {
-            MochiIonicon("checkmark", tint = ok, size = 26.dp)
+            when (status.phase) {
+                NekoStatus.Phase.Checking ->
+                    CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(24.dp), color = accent)
+                NekoStatus.Phase.Active -> MochiIonicon("checkmark", tint = accent, size = 26.dp)
+                NekoStatus.Phase.Detached -> MochiIonicon("alert-circle", tint = accent, size = 26.dp)
+                NekoStatus.Phase.Absent -> MochiIonicon("close-circle", tint = accent, size = 26.dp)
+            }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                stringResource(R.string.home_working),
+                stringResource(
+                    when (status.phase) {
+                        NekoStatus.Phase.Checking -> R.string.home_status_checking
+                        NekoStatus.Phase.Active -> R.string.home_status_active
+                        NekoStatus.Phase.Detached -> R.string.home_status_detached
+                        NekoStatus.Phase.Absent -> R.string.home_status_absent
+                    },
+                ),
                 style = MochiTheme.textStyles.body.copy(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold),
             )
             Text(
-                stringResource(
-                    R.string.home_working_version,
-                    "${MockData.ksuVersion}-${MockData.kernelUapiVersion}",
-                ),
+                when (status.phase) {
+                    NekoStatus.Phase.Active -> stringResource(R.string.home_status_kernel, status.kernelVersion.orEmpty())
+                    NekoStatus.Phase.Detached -> stringResource(R.string.home_status_detached_hint)
+                    NekoStatus.Phase.Absent -> stringResource(R.string.home_status_absent_hint)
+                    NekoStatus.Phase.Checking -> stringResource(R.string.home_status_checking_hint)
+                },
                 style = MochiTheme.textStyles.footnote,
                 color = scheme.onSurfaceVariant,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
             FlowRow(
@@ -142,8 +173,16 @@ private fun ActiveCard() {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                MochiListStatusChip(MockData.lkmMode, containerColor = neutralBg, contentColor = scheme.onSurfaceVariant)
-                MochiListStatusChip("LKM", containerColor = neutralBg, contentColor = scheme.onSurfaceVariant)
+                // 只有内核通道真的通了才敢标 LKM；没通时这两个字就是假信息
+                when (status.phase) {
+                    NekoStatus.Phase.Active -> {
+                        MochiListStatusChip("LKM", containerColor = neutralBg, contentColor = scheme.onSurfaceVariant)
+                        MochiListStatusChip("ncore", containerColor = neutralBg, contentColor = scheme.onSurfaceVariant)
+                    }
+                    NekoStatus.Phase.Detached ->
+                        MochiListStatusChip("ncore", containerColor = neutralBg, contentColor = scheme.onSurfaceVariant)
+                    else -> Unit
+                }
             }
         }
     }
@@ -176,6 +215,7 @@ private fun Notice(
 private fun StatsRow(
     onOpenTab: (Int) -> Unit,
     grantedCount: Int,
+    moduleCount: Int?,
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         StatTile(
@@ -187,7 +227,7 @@ private fun StatsRow(
         StatTile(
             title = stringResource(R.string.module),
             icon = "extension-puzzle",
-            count = MockData.modules.size,
+            count = moduleCount,
             modifier = Modifier.weight(1f),
         ) { onOpenTab(2) }
     }
@@ -197,7 +237,7 @@ private fun StatsRow(
 private fun StatTile(
     title: String,
     icon: String,
-    count: Int,
+    count: Int?,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -215,8 +255,12 @@ private fun StatTile(
             MochiIonicon(icon, tint = scheme.onSurfaceVariant, size = 16.dp)
             Text(title, style = MochiTheme.textStyles.subhead, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+        // 模块数读不出来时给「—」：这个状态下确实没有可展示的数字，
+        // 用 0 会让人以为一个模块都没装。
+        val label = count?.toString() ?: "—"
         MochiCounterText(
-            count.toLong(),
+            label,
+            label.length,
             style = MochiTheme.textStyles.body.copy(fontSize = 28.sp, lineHeight = 34.sp, fontWeight = FontWeight.SemiBold),
             color = scheme.onSurface,
         )
