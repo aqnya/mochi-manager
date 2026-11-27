@@ -96,11 +96,6 @@ object NekoStatusRepository {
         Log.i(TAG, "内核=${version ?: "不可用"} ncore=$image 模块=${modules ?: "未知"}")
     }
 
-    /** 部署成功后立刻标成 Present，省掉一次 su 探测。 */
-    fun markDeployed() {
-        _state.value = _state.value.copy(ncore = NcoreImage.Present)
-    }
-
     /**
      * 真实探测 `/data/adb/ncore`。
      *

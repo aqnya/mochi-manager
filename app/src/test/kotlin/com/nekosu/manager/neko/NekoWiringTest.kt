@@ -41,13 +41,6 @@ class NekoWiringTest {
     }
 
     @Test
-    fun `ncore 未部署时 isDeployed 为 false`() {
-        // 部署状态按 versionCode 记在 SharedPreferences 里，空数据即未部署
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        assertFalse(Ncore.isDeployed(context))
-    }
-
-    @Test
     fun `能力位与内核 caps 互转`() {
         val names = setOf("CAP_DAC_OVERRIDE", "CAP_SYS_ADMIN", "CAP_SETGID")
         val mask = capsMask(names)

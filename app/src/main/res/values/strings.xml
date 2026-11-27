@@ -7,7 +7,7 @@
     <string name="home_status_active">运行中</string>
     <string name="home_status_kernel">内核 %1$s</string>
     <string name="home_status_detached">内核模块未连接</string>
-    <string name="home_status_detached_hint">ncore 已就位，但没有拿到内核控制通道。确认已刷入 NekoSU 内核模块并重启。</string>
+    <string name="home_status_detached_hint">ncore 已就位，但没有拿到内核控制通道。确认已刷入 NekoSU 内核模块、本应用签名与内核配置的管理器一致，然后重启。</string>
     <string name="home_status_absent">未安装</string>
     <string name="home_status_absent_hint">未检测到 NekoSU 内核模块与 ncore。</string>
     <string name="home_device_model">设备型号</string>

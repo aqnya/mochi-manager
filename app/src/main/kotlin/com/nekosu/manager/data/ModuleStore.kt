@@ -11,15 +11,15 @@ import org.json.JSONObject
  * 数据来自 ncore 的 `module list --json`（neko 包里模块运行时的输出），字段与
  * `module.prop` 一致；开关、卸载、撤销卸载全部转给 ncore 的 CLI，界面不再维护本地假状态。
  *
- * ncore 还没落地（没 root、没跑过部署、或设备不是 arm64）时 [load] 返回 null，
+ * ncore 还没被内核引导起来（没 root、内核没装、或设备不是 arm64）时 [load] 返回 null，
  * 让界面显示空态而不是一份假的模块列表。
  */
 object ModuleStore {
     private const val TAG = "NekoSU/Modules"
 
     suspend fun load(): List<ModuleEntry>? {
-        // 不再前置判断「ncore 是否部署过」：那条记录只能说明某次部署成功过，
-        // 文件被删/被覆盖成别的东西时它会撒谎。直接问 ncore，跑不起来就是 null。
+        // 不前置判断「ncore 是否部署过」：任何本地记录都只是历史，文件被删/被替换时会撒谎。
+        // 直接问 ncore，跑不起来就是 null。
         val result =
             runCatching { Ncore.moduleListJson() }
                 .onFailure { Log.w(TAG, "执行 ncore 失败：${it.message}") }

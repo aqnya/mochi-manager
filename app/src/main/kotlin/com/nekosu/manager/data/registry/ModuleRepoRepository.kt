@@ -185,30 +185,26 @@ sealed interface InstallOutcome {
 }
 
 /**
- * 用 KernelSU 的 `ksud module install` 安装 ZIP。
+ * 安装模块 ZIP：优先走 ncore 的 `module install`，没有 ncore 时退回 `ksud`。
  *
- * 这一步需要 root：`su -c` 起一个 shell 跑 ksud。管理器自身没有安装逻辑，
- * 真正的解包、校验 `module.prop`、写 `/data/adb/modules` 都由 ksud 完成，
- * 所以这里只负责把文件放到 root 可读的位置并把输出带回来。
+ * 解包、校验 `module.prop`、写 `/data/adb/modules` 都由 ncore/ksud 完成，
+ * 管理器只负责把文件路径交给它们并把输出带回来。ncore 由内核在 boot 阶段引导，
+ * 这里不复制镜像、也不做任何 manager 认证。
  */
 object ModuleInstaller {
     private const val TIMEOUT_SECONDS = 120L
 
-    suspend fun install(
-        context: Context,
-        zip: File,
-    ): InstallOutcome =
+    suspend fun install(zip: File): InstallOutcome =
         withContext(Dispatchers.IO) {
             if (!zip.isFile) return@withContext InstallOutcome.Failure("安装包不存在：${zip.name}")
 
-            // 1) neko 的 ncore：解包、校验 module.prop、写 /data/adb/modules 都由它完成
-            if (runCatching { Ncore.ensureInstalled(context) }.getOrDefault(false)) {
-                val result = runCatching { Ncore.moduleInstall(zip) }.getOrNull()
-                if (result != null && result.exitCode == 0) {
-                    return@withContext InstallOutcome.Success(result.output.ifBlank { "安装完成" })
-                }
-                Log.w(LOG_TAG, "ncore 安装失败：${result?.output?.take(200)}")
+            // 1) neko 的 ncore：解包、校验 module.prop、写 /data/adb/modules 都由它完成。
+            //    ncore 由内核在 boot 阶段引导，这里不负责部署，直接调它的 CLI。
+            val result = runCatching { Ncore.moduleInstall(zip) }.getOrNull()
+            if (result != null && result.exitCode == 0) {
+                return@withContext InstallOutcome.Success(result.output.ifBlank { "安装完成" })
             }
+            Log.w(LOG_TAG, "ncore 安装失败：${result?.output?.take(200)}")
 
             // 2) 没有可用的 ncore 时退回 KernelSU 的 ksud
             val quoted = "'" + zip.absolutePath.replace("'", "'\\''") + "'"
@@ -307,7 +303,7 @@ class ModuleRepoRepository private constructor(
         onProgress: (Float) -> Unit,
     ): DownloadedModule = RepoDownloads.download(release, File(context.cacheDir, "module_downloads"), onProgress)
 
-    override suspend fun install(zip: File): InstallOutcome = ModuleInstaller.install(context, zip)
+    override suspend fun install(zip: File): InstallOutcome = ModuleInstaller.install(zip)
 
     /** 图标缓存目录，UI 层的图标加载器共用。 */
     val iconDir: File

@@ -77,23 +77,23 @@ app/src/main/cpp/           本工程自己的 JNI 桥（C++）
 ### ncore 的编译与部署
 
 ```sh
-./neko/build-ncore.sh                    # 用内置的证书指纹
-NKSU_MANAGER_CERTHASH=<hex> ./neko/build-ncore.sh   # 换签名时覆盖
+./neko/build-ncore.sh                                  # 默认：未签名，debug 内核可直接用
+SIGNING_KEY=ncore.pem SIGNING_PASSWORD=... ./neko/build-ncore.sh   # 只有 release 内核需要
 ```
 
-证书指纹默认内置为本仓库 release keystore 的 SHA-256（`ce6948…969f`），换签名只需改这个变量。
 脚本用 NDK clang 交叉编译（`aarch64-linux-android`，API 31），产物直接放到
 `app/src/main/jniLibs/arm64-v8a/libncore.so`。它其实是**可执行文件顶着 .so 的名字**：
 内核要按 `/data/app/<pkg>/lib/arm64-v8a/libncore.so` 这个路径引导它，所以 APK 里必须解压成真实文件
 （`packaging.jniLibs.useLegacyPackaging = true`）。
 
-首次启动时 `Ncore.ensureInstalled()` 分两步：先 `cp` 到 `/data/adb/ncore` 并跑 `ncore install`
-（铺开 `/data/adb/nksu/bin`），再跑 `ncore manager scan`（把本应用 uid 交给内核认成 manager）。
-第二步失败不阻断部署，只是授权读不到内核数据、退回本地表。
+引导和鉴权都不归管理器管：内核的 exec 探针只认 `/data/adb/ncore` 这个路径，init 在
+post-fs-data 执行它时自动挂上控制 fd；ncore 自己在 boot 阶段扫 `packages.xml`（用编译期
+指纹 `NKSU_MANAGER_CERTHASH`，默认 `ce6948…969f`）把管理器 uid 交给内核。管理器只调它的
+CLI，不复制镜像、不跑 `ncore install`、也不做 `manager scan`——重复做只会和内核抢同一份状态。
+指纹是 ncore 的编译期常量，换 keystore 仍然要重编 ncore。
 
-> 首次部署的前提是设备上已经有一个可用的 `su`：`su` 由内核 hook 重定向到 `/data/adb/ncore`，
-> ncore 不在时 su 自己也起不来，这一步没法自举。全新设备请先用已签名的官方 ncore 引导，
-> 或从 recovery / adb 手动把 `libncore.so` 放到 `/data/adb/ncore`。
+> 自举：`su` 由内核 hook 重定向到 `/data/adb/ncore`。debug 内核跳过镜像验签，会直接把 APK
+> 里的 `libncore.so` 铺到 `/data/adb/ncore`；release 内核只接受带官方私钥签名的镜像。
 
 ### 安装状态
 
@@ -111,26 +111,26 @@ NKSU_MANAGER_CERTHASH=<hex> ./neko/build-ncore.sh   # 换签名时覆盖
 
 ### 签名约束
 
-内核通过两层检查决定「谁能当管理器」：
+内核的 ncore 验签一共三处，底层都落到 `nksu_ncore_verify_file`：
 
-| 检查 | 位置 | 跳过条件 |
+| 检查 | 调用点 | debug 构建（`CONFIG_NKSU_DEBUG=y`） |
 | --- | --- | --- |
-| ncore 镜像本身（`/data/adb/ncore`、`/data/app` 扫描到的 libncore.so） | `nksu_ncore_verify_file` | 无条件，必须带有效 RSA-4096 签名 |
-| 调用者是不是可信 ncore | `nksu_ncore_verify_caller` | `CONFIG_NKSU_DEBUG` 构建直接 `return 0` |
+| 加载 / 执行 ncore 镜像 | `spawn.c` → `nksu_ncore_verify_path` | 直接 `return 0` |
+| 管理器上报的 ncore 路径 | `manager.c` → `nksu_ncore_verify_file` | 直接 `return 0` |
+| ioctl 调用者是不是 ncore | `manager.c` → `nksu_ncore_verify_caller` | 直接 `return 0` |
 
-也就是说：**debug 内核只跳过 caller 校验**，所以自签名的 ncore 也能在 `manager scan` 时
-让内核认下我们传的 uid；镜像级验签仍然存在，内核自己的 bootstrap 不会加载未签名镜像——
-但我们的部署路径是应用自己 `su -c cp` 到 `/data/adb/ncore`，不经过那一步验签。
-
-`manager scan` 读的是编译期写进 ncore 的证书指纹（`NKSU_MANAGER_CERTHASH`，默认就是本仓库
-release keystore 的证书 SHA-256），在 `packages.xml` 里找到指纹匹配的包，再把它的 uid
-交给内核。所以**换签名必须重编 ncore**，否则 `scan` 找不到包，应用不会被认定为 manager。
+上游已把三处统一到 `CONFIG_NKSU_DEBUG`：**debug 内核不做任何 ncore 签名校验**——自签名、
+甚至完全没签名的镜像都能被内核引导、被 spawn，ncore 在 boot 阶段也能把管理器 uid 交给内核。
 
 | 场景 | 结果 |
 | --- | --- |
-| debug 内核 + 本仓库默认构建 | `manager scan` 成功 → 应用成为 manager → `prctl` 拿到控制 fd，授权直连内核 |
-| release 内核 + 本仓库默认构建 | caller 验签失败 → 不给 fd，授权退回本地 JSON，模块 CLI 照常 |
+| debug 内核 + 本仓库默认构建（未签名 ncore） | 三处全放行；内核引导 ncore → ncore 自报 manager uid → 应用 `prctl` 拿到控制 fd，授权直连内核 |
+| release 内核 + 本仓库默认构建 | 镜像验签失败，ncore 起不来，内核通道不可用；应用退回本地授权表和 `ksud` |
 | release 内核 + 上游签名私钥 | 与官方管理器一致，全部走内核通道 |
+
+管理器的角色只是消费结果：不复制 ncore、不跑 `ncore install`、也不做 `manager scan`
+（`nksu_ncore_verify_caller` 那条路留给 ncore 自己）。`packages.xml` 里的证书比对发生在
+ncore 的 boot 阶段，用编译期指纹，和上面的镜像验签是两回事。
 
 `NekoKernel.version()` 为 null 时，`SuProfileStore` 全部走本地存储，`ModuleInstaller` 退回
 `ksud`——不会因为缺内核模块就假装成功。

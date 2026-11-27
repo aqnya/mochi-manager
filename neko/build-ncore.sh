@@ -10,13 +10,14 @@
 #
 # 环境变量：
 #   ANDROID_NDK_HOME        NDK 路径（默认 /opt/android-sdk/ndk/27.2.12479018）
-#   NKSU_MANAGER_CERTHASH   管理器签名证书 SHA-256（64 位 hex）。ncore 拿它在
-#                           packages.xml 里找管理器包；留空则只认显式传入的 hash。
-#                           默认值是本仓库 release keystore 的证书指纹，换签名时覆盖它。
+#   NKSU_MANAGER_CERTHASH   管理器签名证书 SHA-256（64 位 hex）。ncore 在 boot 阶段
+#                           拿它在 packages.xml 里找管理器包，再把 uid 交给内核；
+#                           管理器自己不参与认证。默认值是本仓库 release keystore 的
+#                           证书指纹，换签名时覆盖它并重编。
 #   SIGNING_KEY / SIGNING_PASSWORD
-#                           可选：ncore 镜像的 RSA-4096 私钥与口令。内核只加载
-#                           尾部带有效签名的 ncore；没有私钥时产物仍可当 CLI 用，
-#                           但不会被内核接受为可信 ncore。
+#                           可选：ncore 镜像的 RSA-4096 私钥与口令。只有 release 内核
+#                           才会验这层签名；debug 内核（CONFIG_NKSU_DEBUG）跳过镜像、
+#                           spawn、caller 全部 ncore 验签，所以不签也能被加载。
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -66,7 +67,7 @@ if [ -n "${SIGNING_KEY:-}" ] && [ -f "${SIGNING_KEY}" ] && [ -n "${SIGNING_PASSW
     rm -f "$ROOT/neko/target/ncore.sig"
     echo "已追加 512 字节签名"
 else
-    echo "未提供签名私钥，产物仅能作为普通 CLI 使用"
+    echo "未提供签名私钥：产物未带签名，仅 debug 内核（CONFIG_NKSU_DEBUG）能加载"
 fi
 
 ls -l "$OUT/libncore.so"
