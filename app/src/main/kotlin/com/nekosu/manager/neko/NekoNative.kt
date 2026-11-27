@@ -54,6 +54,9 @@ object NekoNative {
     @JvmStatic
     private external fun nativeFeatureGet(id: Int): Long
 
+    @JvmStatic
+    private external fun nativeReadRootFile(path: String): ByteArray?
+
     fun version(): String? = call { nativeVersion() }
 
     fun available(): Boolean = call { nativeAvailable() } ?: false
@@ -78,6 +81,16 @@ object NekoNative {
     fun featureList(): String? = call { nativeFeatureList() }
 
     fun featureGet(id: Int): Long? = call { nativeFeatureGet(id) }?.takeIf { it >= 0 }
+
+    /**
+     * 以 root 读整个文件内容；失败返回 null。
+     *
+     * fork 出的子进程里 `setresuid(0,0,0)` 临时提权，文件内容经管道传回，
+     * 子进程退出即权限消失（对齐上游 `Ncore.readFile`）。只在内核模块在线且
+     * 本应用是 manager 时成立——内核给 manager 的 uid 放行 setresuid 到 0；
+     * 内核不在线时调用方降级到 [com.nekosu.manager.data.RootShell]。
+     */
+    fun readRootFile(path: String): ByteArray? = call { nativeReadRootFile(path) }?.takeIf { it.isNotEmpty() }
 
     private inline fun <T> call(block: () -> T): T? {
         if (!loaded) return null

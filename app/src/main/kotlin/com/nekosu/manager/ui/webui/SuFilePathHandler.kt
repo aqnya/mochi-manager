@@ -4,6 +4,7 @@ import android.util.Log
 import android.webkit.WebResourceResponse
 import androidx.webkit.WebViewAssetLoader
 import com.nekosu.manager.data.RootShell
+import com.nekosu.manager.neko.NekoNative
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
@@ -41,8 +42,10 @@ internal fun resolveWithinWebRoot(
  * 为什么不直接 `file://`：WebView 的 file 域没有同源隔离，模块页里跑的第三方 JS 能读
  * 整个 app 私有目录；https 域名只暴露 webroot 一个目录，和 KernelSU 的做法一致。
  *
- * 文件读取走 [RootShell.openSuReadStream]（`su -c cat`），webroot 在 /data/adb 下，
- * 应用进程自己读不到。访问范围用 [resolveWithinWebRoot] 的字符串级前缀校验限定，
+ * 文件读取优先走 [NekoNative.readRootFile]（fork 子进程里 setresuid 临时提权，
+ * 无需每次 exec 一个 `su -c cat`），内核不在线或文件超上限时回退到
+ * [RootShell.openSuReadStream]。webroot 在 /data/adb 下，应用进程自己读不到。
+ * 访问范围用 [resolveWithinWebRoot] 的字符串级前缀校验限定，
  * 保留路径 `internal/` 下发管理器侧的 CSS。
  */
 class SuFilePathHandler(
@@ -94,15 +97,25 @@ class SuFilePathHandler(
         targetPath: String,
         path: String,
     ): InputStream? {
+        // 原生读取：内核在线时子进程 setresuid 临时提权，比每次 fork 一个
+        // `su -c cat`（多一次 su 二进制 exec + shell 解析 + SELinux 域迁移）便宜一个量级。
+        // null（内核不在线 / 不是 manager / 文件超上限）回退到 su 流式读取。
+        NekoNative.readRootFile(targetPath)?.let { return decompressIfSvgz(ByteArrayInputStream(it), path) }
         val raw = RootShell.openSuReadStream("cat -- '${quote(targetPath)}'") ?: return null
-        return if (path.endsWith(".svgz")) {
-            runCatching { GZIPInputStream(raw) }.getOrElse {
-                raw.close()
+        return decompressIfSvgz(raw, path)
+    }
+
+    /** `.svgz` 是 gzip 压缩的 svg，解压成流再交给 WebView；解不开按 404 处理。 */
+    private fun decompressIfSvgz(
+        stream: InputStream,
+        path: String,
+    ): InputStream? {
+        if (!path.endsWith(".svgz")) return stream
+        return runCatching { GZIPInputStream(stream) }
+            .getOrElse {
+                runCatching { stream.close() }
                 null
             }
-        } else {
-            raw
-        }
     }
 
     /** `URLConnection` 对 html/js/woff2 一类给不出正确类型，先查表再兜底。 */

@@ -13,9 +13,13 @@
 
 #include <android/log.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <jni.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/prctl.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -146,6 +150,69 @@ jstring new_string(JNIEnv* env, const std::string& value) {
     return env->NewStringUTF(value.c_str());
 }
 
+// —— root 文件读取（对齐上游 neko/jni 的 read_file_impl）——
+// NekoSU 内核模块在线且本应用被认定为 manager 时，内核会给本 uid 放行
+// setresuid 到 0；不在线时子进程提权必然失败，Kotlin 侧据此降级到 su。
+constexpr size_t kReadChunk = 65536;
+
+/// webroot 里正常只有网页资产；超过上限按失败处理，调用方走 su 流式读取兜底。
+constexpr off_t kMaxRootFileBytes = 32LL * 1024 * 1024;
+
+/// 等子进程退出，要求正常退出且码为 0；EINTR 自动重试。
+bool wait_child(pid_t pid) {
+    int status = 0;
+    while (true) {
+        if (waitpid(pid, &status, 0) >= 0) break;
+        if (errno != EINTR) return false;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+/// fork 出的子进程主体：setresuid 临时提权到 root，把整个文件泵进管道。
+/// 进程是多线程的，fork 之后只允许 async-signal-safe 的 libc 调用
+/// （open/fstat/read/write/close/_exit），不碰 JNI 与日志。
+/// 权限的「恢复」靠子进程退出完成——in-process 提权后 saved-uid 恒为 0，
+/// 永远降不回去，还会把 Binder 的 uid 检查搞乱，所以不能在主进程里切。
+[[noreturn]] void root_reader_child(const char* path, int pipe_write) {
+    if (setresuid(0, 0, 0) != 0 || getuid() != 0) _exit(1);
+
+    const int file = open(path, O_RDONLY | O_CLOEXEC);
+    if (file < 0) _exit(2);
+
+    struct stat st {};
+    if (fstat(file, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size > kMaxRootFileBytes) {
+        close(file);
+        _exit(3);
+    }
+
+    uint8_t buffer[kReadChunk];
+    while (true) {
+        const ssize_t n = read(file, buffer, sizeof(buffer));
+        if (n > 0) {
+            ssize_t off = 0;
+            while (off < n) {
+                const ssize_t w = write(pipe_write, buffer + off, static_cast<size_t>(n - off));
+                if (w > 0) {
+                    off += w;
+                } else if (w < 0 && errno == EINTR) {
+                    continue;
+                } else {
+                    close(file);
+                    _exit(4);
+                }
+            }
+        } else if (n == 0) {
+            break;
+        } else if (errno != EINTR) {
+            close(file);
+            _exit(5);
+        }
+    }
+    close(file);
+    close(pipe_write);
+    _exit(0);
+}
+
 }  // namespace
 
 extern "C" {
@@ -235,6 +302,67 @@ Java_com_nekosu_manager_neko_NekoNative_nativeFeatureGet(JNIEnv*, jclass, jint i
     put_u32(data, 0, static_cast<uint32_t>(id));
     if (ioc(IOC_FEATURE_GET, data, sizeof(data)) < 0) return -1;
     return static_cast<jlong>(get_u64(data, FMAC_OFF_FEATURE_VALUE));
+}
+
+/// 以 root 读整个文件；失败（提权不了 / 打不开 / 不是普通文件 / 超上限）返回 null。
+///
+/// 每次调用 fork 一个子进程：setresuid(0,0,0) 临时提权 → open → 泵管道 → 退出。
+/// 相比 `su -c cat` 少了 su 二进制 exec、shell 解析和 SELinux 域迁移，
+/// 每次 WebUI 资源请求都省一大截；内核不在线时子进程提权失败，返回 null。
+JNIEXPORT jbyteArray JNICALL
+Java_com_nekosu_manager_neko_NekoNative_nativeReadRootFile(JNIEnv* env, jclass, jstring jpath) {
+    const char* path = env->GetStringUTFChars(jpath, nullptr);
+    if (path == nullptr) return nullptr;
+
+    // 子进程写管道、父进程先关读端时可能触发 SIGPIPE；忽略它，让 write 报错退出子进程
+    static const bool sigpipe_ignored = [] {
+        signal(SIGPIPE, SIG_IGN);
+        return true;
+    }();
+    (void)sigpipe_ignored;
+
+    int pipe_fd[2];
+    if (pipe(pipe_fd) != 0) {
+        env->ReleaseStringUTFChars(jpath, path);
+        return nullptr;
+    }
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        close(pipe_fd[0]);
+        close(pipe_fd[1]);
+        env->ReleaseStringUTFChars(jpath, path);
+        return nullptr;
+    }
+    if (pid == 0) {
+        close(pipe_fd[0]);
+        root_reader_child(path, pipe_fd[1]);
+    }
+
+    env->ReleaseStringUTFChars(jpath, path);
+    close(pipe_fd[1]);
+
+    std::vector<uint8_t> data;
+    uint8_t buffer[kReadChunk];
+    while (true) {
+        const ssize_t n = read(pipe_fd[0], buffer, sizeof(buffer));
+        if (n > 0) {
+            data.insert(data.end(), buffer, buffer + n);
+        } else if (n == 0) {
+            break;
+        } else if (errno != EINTR) {
+            break;
+        }
+    }
+    close(pipe_fd[0]);
+
+    if (!wait_child(pid) || data.empty()) return nullptr;
+
+    jbyteArray result = env->NewByteArray(static_cast<jsize>(data.size()));
+    if (result == nullptr) return nullptr;
+    env->SetByteArrayRegion(result, 0, static_cast<jsize>(data.size()),
+                            reinterpret_cast<const jbyte*>(data.data()));
+    return result;
 }
 
 }  // extern "C"
