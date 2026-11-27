@@ -4,7 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.dp
 import com.nekosu.manager.ui.home.HomeScreen
-import com.nekosu.manager.ui.module.ModuleScreen
+import com.nekosu.manager.ui.module.ModuleFlow
 import com.nekosu.manager.ui.settings.SettingsFlow
 import com.nekosu.manager.ui.superuser.SuperUserFlow
 import kotlinx.collections.immutable.toImmutableList
@@ -51,7 +51,7 @@ fun MochiRoot() {
         when (index) {
             0 -> HomeScreen(onOpenTab = { tabState.select(it) })
             1 -> SuperUserFlow()
-            2 -> ModuleScreen()
+            2 -> ModuleFlow()
             else -> SettingsFlow()
         }
     }

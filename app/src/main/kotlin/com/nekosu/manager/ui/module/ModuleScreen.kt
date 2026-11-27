@@ -54,10 +54,14 @@ import ui.feice.mochi.theme.MochiTheme
 
 /**
  * 模块：卡片列表，支持搜索、排序、启停、执行动作 / 打开 WebUI、卸载与撤销。
- * 数据来自 [MockData.modules]，启停和卸载状态在本地生效。
+ * 已安装列表仍来自 [MockData.modules]（本工程没有模块数据层），启停和卸载状态在本地生效；
+ * 右上角的商店按钮进入真实的模块仓库 [ModuleRepoScreen]。
  */
 @Composable
-fun ModuleScreen(modifier: Modifier = Modifier) {
+fun ModuleScreen(
+    onOpenRepo: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
     val modules = remember { mutableStateListOf<ModuleEntry>().apply { addAll(MockData.modules) } }
     var query by rememberSaveable { mutableStateOf("") }
     var actionFirst by rememberSaveable { mutableStateOf(false) }
@@ -88,7 +92,7 @@ fun ModuleScreen(modifier: Modifier = Modifier) {
         modifier = modifier,
         actions = {
             MochiBarGroup(navId = "module.actions") {
-                MochiBarGroupItem(onClick = {}, navId = "module.repo", contentKey = "storefront") {
+                MochiBarGroupItem(onClick = onOpenRepo, navId = "module.repo", contentKey = "storefront") {
                     MochiIonicon("storefront")
                 }
                 MochiBarGroupItem(onClick = {}, navId = "module.install", contentKey = "add") {

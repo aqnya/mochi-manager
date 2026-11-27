@@ -31,12 +31,13 @@ app/src/main/kotlin/com/nekosu/manager/
 ├── data/SuProfile.kt        按 uid 的超级用户配置（本地 JSON 存储，含旧包名数据迁移）
 ├── data/DeviceInfo.kt       真实设备信息采集 + 启动预热缓存（首帧即完整）
 ├── data/AppearanceSettings.kt 外观设置（玻璃开关 + 玻璃样式，settings 偏好持久化）
-├── data/MockData.kt         仍为假数据的部分（5 个模块、KernelSU 运行状态）
+├── data/MockData.kt         仍为假数据的部分（已安装模块列表、KernelSU 运行状态）
+├── data/registry/           模块仓库（modules.kernelsu.org v1）：解析、缓存、校验下载
 ├── ui/MochiRoot.kt          底部四 Tab 容器
 ├── ui/home/                 首页
 ├── ui/superuser/            超级用户（真实应用列表）
 ├── ui/profile/              应用配置页（是否放行 / uid / gid / 附加组 / 能力位 / SELinux）
-├── ui/module/               模块
+├── ui/module/               模块（已安装列表 + ModuleFlow → 模块仓库 → 仓库详情）
 ├── ui/settings/             设置（SettingsFlow → 主题设置 ThemeScreen）
 ├── ui/mochi/Bits.kt         图标色块 / 开关行 / 应用图标占位
 └── ui/theme/                Mochi 配色、字体、主题入口
@@ -49,7 +50,9 @@ app/src/main/kotlin/com/nekosu/manager/
   授权是本地 SharedPreferences 记录，没有写进 KernelSU 白名单。
 - 首页设备信息为真实采集（见下文）；模块列表仍是静态模拟，设置页开关只改本地状态。
 - 共享 uid 的应用合并为一行，配置按 uid 存取，组内所有包共用（见下文）；
-- 应用配置页已移植（点击超级用户列表任意一行进入）；模块仓库、安装/刷写、外观、Sulog、关于、WebUI 尚未移植。
+- 应用配置页已移植（点击超级用户列表任意一行进入）。
+- 模块页右上角的商店按钮进入**真实模块仓库**（`modules.kernelsu.org`），可搜索、按更新时间 / 名称 / 星标排序、
+  看详情并从 GitHub Release 下载安装；已安装模块列表本身仍是静态模拟，安装/刷写、Sulog、关于、WebUI 尚未移植。
 - 二级页面用 `MochiNavHost`：iOS 侧推转场 + 跟手侧滑返回（预测性返回），路由在 `ui/superuser/SuperUserFlow.kt`。
 - 设置 → 主题是真实页面：玻璃开关切换 `MochiTheme` 的 materials（tab bar、顶栏按钮、菜单、弹窗
   一起换），值存在 `settings` 偏好里，重启保留；开启后同组多出「玻璃样式」，按 mochi demo 的
@@ -115,3 +118,23 @@ KernelSU 的 su 白名单与 profile 都以 **uid** 为粒度，所以列表不�
 
 所有读取都单独 runCatching，某一项被 ROM 限制只影响那一格（显示「未知」/「不支持」），不会影响页面；
 采集在 `MainActivity.onCreate` 的首帧之前同步完成并缓存，首页直接读缓存，**不存在占位符或「—」的中间态**。
+
+## 模块仓库
+
+对齐 KernelSU 管理器（上游 `RegistryClient` / `RegistryParser` / `ModuleRepoRepository`）的 v1 协议，
+数据来自 `https://modules.kernelsu.org/api/v1`，不依赖第三方聚合站：
+
+| 环节 | 实现 |
+| --- | --- |
+| 协议 | 先取 `index.json` 拿 `modules` 路径，再取模块列表；两份文档的 `buildId` 必须一致，`schemaVersion` 不是 1 直接拒绝 |
+| 缓存 | `filesDir/module_registry` 存完整副本；刷新失败时退回上一次的副本并标记 `stale`，界面提示「可能不是最新」而不是清空 |
+| 搜索 | 匹配 id / 名称 / 摘要 / 作者 / 标签，忽略大小写 |
+| 排序 | 更新时间（stable 的 `publishedAt` 倒序）、名称（中文 `Collator`）、星标（未知星标的排已知之后，同分按时间） |
+| 图标 | 相对路径拼站点域名，按 URL 落盘 + 12 MB 位图 LRU，列表滚动不重复解码 |
+| 下载 | 只接受 `https://github.com/<owner>/<repo>/releases/download/...`，非 GitHub 主机、带 query、带 userinfo 一律丢弃 |
+| 校验 | 下载后核对 Release 记录的字节数与 SHA-256，不一致删除临时文件并报错，绝不交给 `ksud` |
+| 安装 | `su -c ksud module install <path>`，依次尝试 `/data/adb/ksud` 与 PATH 里的 `ksud`；拿不到 root、找不到 ksud、返回码非 0 都给可读原因，不会假装成功 |
+| 脚本条目 | `kind: script` 只展示、跳网页运行，不提供安装按钮 |
+| 刷新 | 与超级用户页同一套 `runRefresh`：最短 350ms、上限 30s（要联网，比读本地列表放宽），取消能向上传播 |
+
+下载的 ZIP 放在 `cacheDir/module_downloads`，按 SHA-256 命名，重复安装同一版本直接复用。
