@@ -49,6 +49,7 @@ import com.nekosu.manager.data.StagedModule
 import com.nekosu.manager.ui.webui.webUiIntent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
@@ -97,6 +98,42 @@ fun ModuleScreen(
     var enabledFirst by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
 
+    // —— 模块更新：列表载入后逐个检查 updateJson，确认有新版才亮出更新按钮；
+    //    点击 → 确认 → 下载 → 交给安装输出页 ——
+    var updates by remember { mutableStateOf<Map<String, ModuleUpdateInfo>>(emptyMap()) }
+    var updateCheckJob by remember { mutableStateOf<Job?>(null) }
+    var updatePhase by remember { mutableStateOf<UpdatePhase>(UpdatePhase.Idle) }
+    var updateJob by remember { mutableStateOf<Job?>(null) }
+
+    /**
+     * 重新检查所有可能可更新的模块。
+     *
+     * ncore 的 update 标记只代表「模块声明了更新通道」，不代表真有新版——按钮如果照它
+     * 显示，点了多半是「已是最新」。这里逐个拉 updateJson 比较 versionCode，只有
+     * [ModuleUpdate.CheckResult.Available] 才进 [updates]；没写 updateJson 也不带标记
+     * 的模块直接跳过，不发无谓的请求。
+     */
+    fun scheduleUpdateChecks() {
+        updateCheckJob?.cancel()
+        updates = emptyMap()
+        val snapshot = modules.toList()
+        updateCheckJob =
+            scope.launch {
+                coroutineScope {
+                    for (module in snapshot) {
+                        if (module.remove || (!module.hasUpdate && module.updateJson.isBlank())) continue
+                        launch {
+                            when (val result = ModuleUpdate.check(module)) {
+                                is ModuleUpdate.CheckResult.Available ->
+                                    updates = updates + (module.id to result.info)
+                                else -> Unit
+                            }
+                        }
+                    }
+                }
+            }
+    }
+
     // 首次进入和下拉刷新共用同一条挂起链路：onRefresh 要等它返回，指示器才会复位。
     suspend fun loadModules() {
         loading = true
@@ -107,6 +144,7 @@ fun ModuleScreen(
         // 重复 key 会让 LazyColumn 直接抛异常，这里先按 id 去重。
         modules.addAll(loaded.orEmpty().distinctBy { it.id })
         loading = false
+        scheduleUpdateChecks()
     }
 
     // 模块列表来自 ncore（真实的 /data/adb/modules），不再有本地假数据
@@ -152,24 +190,13 @@ fun ModuleScreen(
             }
         }
 
-    // —— 模块更新：检查 updateJson → 确认 → 下载 → 交给安装输出页 ——
-    var updatePhase by remember { mutableStateOf<UpdatePhase>(UpdatePhase.Idle) }
-    var updateJob by remember { mutableStateOf<Job?>(null) }
-
-    fun beginUpdateCheck(module: ModuleEntry) {
+    // —— 模块更新：点击后的确认与下载（检查在 scheduleUpdateChecks 里已做完） ——
+    fun beginUpdateConfirm(
+        module: ModuleEntry,
+        info: ModuleUpdateInfo,
+    ) {
         if (updateJob?.isActive == true) return
-        updatePhase = UpdatePhase.Checking
-        updateJob =
-            scope.launch {
-                updatePhase =
-                    when (val result = ModuleUpdate.check(module)) {
-                        is ModuleUpdate.CheckResult.Available -> UpdatePhase.Confirm(module, result.info)
-                        is ModuleUpdate.CheckResult.UpToDate -> UpdatePhase.UpToDate(result.version)
-                        ModuleUpdate.CheckResult.NoUpdateUrl -> UpdatePhase.Failed(context.getString(R.string.module_update_no_url))
-                        is ModuleUpdate.CheckResult.Failed ->
-                            UpdatePhase.Failed(context.getString(R.string.module_update_check_failed, result.message))
-                    }
-            }
+        updatePhase = UpdatePhase.Confirm(module, info)
     }
 
     fun beginUpdateDownload(
@@ -307,13 +334,17 @@ fun ModuleScreen(
                 item(key = module.id) {
                     ModuleCard(
                         module = module,
+                        updateAvailable = updates[module.id] != null,
                         onToggle = {
                             scope.launch {
                                 if (ModuleStore.setEnabled(module.id, !module.enabled)) refreshKey++
                             }
                         },
                         onOpenWebUi = { context.startActivity(webUiIntent(context, module.id)) },
-                        onUpdate = { beginUpdateCheck(module) },
+                        onUpdate = {
+                            // 按钮只在查到新版后才出现，这里直接进确认
+                            updates[module.id]?.let { beginUpdateConfirm(module, it) }
+                        },
                         onUninstall = {
                             scope.launch {
                                 if (ModuleStore.uninstall(module.id)) refreshKey++
@@ -348,8 +379,6 @@ fun ModuleScreen(
 private sealed interface UpdatePhase {
     data object Idle : UpdatePhase
 
-    data object Checking : UpdatePhase
-
     data class Confirm(
         val module: ModuleEntry,
         val info: ModuleUpdateInfo,
@@ -360,16 +389,12 @@ private sealed interface UpdatePhase {
         val progress: Float,
     ) : UpdatePhase
 
-    data class UpToDate(
-        val version: String,
-    ) : UpdatePhase
-
     data class Failed(
         val message: String,
     ) : UpdatePhase
 }
 
-/** 更新过程中的各状态弹窗；Checking/Downloading 的关闭就是取消任务。 */
+/** 更新过程中的各状态弹窗；Downloading 的关闭就是取消任务。 */
 @Composable
 private fun UpdateDialogs(
     phase: UpdatePhase,
@@ -380,15 +405,6 @@ private fun UpdateDialogs(
     val icon: @Composable () -> Unit = { MochiIonicon("cloud-download", size = 44.dp) }
     when (phase) {
         UpdatePhase.Idle -> Unit
-
-        UpdatePhase.Checking ->
-            MochiDialog(
-                visible = true,
-                onDismissRequest = onCancelBusy,
-                title = stringResource(R.string.module_update_checking),
-                icon = icon,
-                actions = persistentListOf(),
-            )
 
         is UpdatePhase.Confirm ->
             MochiDialog(
@@ -416,19 +432,6 @@ private fun UpdateDialogs(
                 message = phase.module.name,
                 icon = icon,
                 actions = persistentListOf(),
-            )
-
-        is UpdatePhase.UpToDate ->
-            MochiDialog(
-                visible = true,
-                onDismissRequest = onDismiss,
-                title = stringResource(R.string.module_update_up_to_date_title),
-                message = stringResource(R.string.module_update_up_to_date, phase.version),
-                icon = icon,
-                actions =
-                    persistentListOf(
-                        MochiDialogAction(stringResource(android.R.string.ok), MochiDialogActionRole.Primary, onClick = onDismiss),
-                    ),
             )
 
         is UpdatePhase.Failed ->
@@ -513,6 +516,7 @@ private sealed interface ImportPhase {
 @Composable
 private fun ModuleCard(
     module: ModuleEntry,
+    updateAvailable: Boolean,
     onToggle: () -> Unit,
     onOpenWebUi: () -> Unit,
     onUpdate: () -> Unit,
@@ -608,7 +612,8 @@ private fun ModuleCard(
                     val usable = module.enabled && !module.remove
                     if (usable && module.hasAction) CardButton("play", actionLabel, {})
                     if (usable && module.hasWebUi) CardButton("globe", openLabel, onOpenWebUi)
-                    if (module.hasUpdate && !module.remove) CardButton("cloud-download", stringResource(R.string.module_update), onUpdate)
+                    // 只有 updateJson 真的查到新版本才显示更新按钮
+                    if (updateAvailable && !module.remove) CardButton("cloud-download", stringResource(R.string.module_update), onUpdate)
                     if (module.remove) CardButton("arrow-undo", stringResource(R.string.undo), onUndoUninstall)
                 }
                 if (!module.remove) {
