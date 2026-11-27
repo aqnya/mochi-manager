@@ -59,7 +59,7 @@ data class DownloadedModule(
  * 模块 ZIP 的下载与校验。
  *
  * 地址在解析阶段已经限定为 GitHub Release，这里再校验一次记录的大小和 SHA-256：
- * 仓库索引是不可变的 Release，内容对不上就删除，绝不交给 `ksud` 安装。
+ * 仓库索引是不可变的 Release，内容对不上就删除，绝不交给 ncore 安装。
  */
 object RepoDownloads {
     private const val CONNECT_TIMEOUT_MS = 20_000
@@ -174,7 +174,7 @@ object RepoDownloads {
     }
 }
 
-/** 安装结果：成功时带上 ksud 的输出，失败时是可读的原因。 */
+/** 安装结果：成功时带上安装器的输出，失败时是可读的原因。 */
 sealed interface InstallOutcome {
     data class Success(
         val output: String,
@@ -187,11 +187,11 @@ sealed interface InstallOutcome {
 }
 
 /**
- * 安装模块 ZIP：优先走 ncore 的 `module install`，没有 ncore 时退回 `ksud`。
+ * 安装模块 ZIP：走 ncore 的 `module install`。
  *
- * 解包、校验 `module.prop`、写 `/data/adb/modules` 都由 ncore/ksud 完成，
- * 管理器只负责把文件路径交给它们并把输出带回来。ncore 由内核在 boot 阶段引导，
- * 这里不复制镜像、也不做任何 manager 认证。
+ * 解包、校验 `module.prop`、写 `/data/adb/modules` 都由 ncore 完成，
+ * 管理器只负责把文件路径交给它并把输出带回来。ncore 由内核在 boot 阶段引导，
+ * 这里不复制镜像、也不做任何 manager 认证；不再回退 ksud。
  */
 object ModuleInstaller {
     private const val TIMEOUT_SECONDS = 120L
@@ -236,8 +236,8 @@ object ModuleInstaller {
     /**
      * 流式安装：每行输出实时回调，[onStart] 拿到 stdin 句柄。
      *
-     * 顺序和之前一致：先 ncore（内核引导的用户态运行时），失败再退回 ksud。
-     * 回退发生时也会往输出里写一行原因，用户能看出为什么换了个执行者。
+     * 只走 ncore（内核引导的用户态运行时）：失败就是失败，原因如实写进输出，
+     * 不再回退 ksud——管理器只认内核引导的 ncore 通道。
      */
     suspend fun installStreaming(
         zip: File,
@@ -250,63 +250,27 @@ object ModuleInstaller {
                 return@withContext InstallOutcome.Failure("安装包不存在：${zip.name}")
             }
 
-            // 1) neko 的 ncore：解包、校验 module.prop、写 /data/adb/modules 都由它完成。
-            //    ncore 由内核在 boot 阶段引导，这里不负责部署，直接调它的 CLI。
+            // 解包、校验 module.prop、写 /data/adb/modules 都由 ncore 完成。
             onLine("$ ncore module install ${zip.name}")
-            val ncore =
-                runCatching {
+            val result =
+                try {
                     Ncore.moduleInstallStreaming(
                         zip,
                         STREAM_TIMEOUT_SECONDS,
                         onStart = onStart,
                         onLine = onLine,
                     )
-                }.getOrElse { e ->
-                    if (e is CancellationException) throw e
-                    onLine("! ncore 无法执行：${e.message}")
-                    null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    return@withContext InstallOutcome.Failure("ncore 无法执行：${e.message}")
                 }
-            if (ncore != null && ncore.exitCode == 0) {
-                return@withContext InstallOutcome.Success("安装完成")
+            if (result.exitCode == 0) {
+                InstallOutcome.Success("安装完成")
+            } else {
+                Log.w(LOG_TAG, "ncore 安装失败 exit=${result.exitCode}")
+                InstallOutcome.Failure("安装失败（退出码 ${result.exitCode}）", result.output)
             }
-            if (ncore != null) {
-                Log.w(LOG_TAG, "ncore 安装失败 exit=${ncore.exitCode}")
-                onLine("! ncore 返回 ${ncore.exitCode}，改用 ksud 重试")
-            }
-
-            // 2) 没有可用的 ncore 时退回 KernelSU 的 ksud
-            val quoted = "'" + zip.absolutePath.replace("'", "'\\''") + "'"
-            var lastFailure: InstallOutcome? = null
-            for (ksud in listOf("/data/adb/ksud", "ksud")) {
-                onLine("$ $ksud module install ${zip.name}")
-                val result =
-                    runCatching {
-                        RootShell.execStreaming(
-                            "$ksud module install $quoted",
-                            STREAM_TIMEOUT_SECONDS,
-                            onStart = onStart,
-                            onLine = onLine,
-                        )
-                    }.getOrElse { e ->
-                        if (e is CancellationException) throw e
-                        onLine("! 无法执行 su：${e.message}")
-                        lastFailure = InstallOutcome.Failure("无法执行 su：${e.message}")
-                        continue
-                    }
-                if (result.exitCode == 0) {
-                    return@withContext InstallOutcome.Success("安装完成")
-                }
-                lastFailure =
-                    InstallOutcome.Failure(
-                        if (result.output.contains("not found", true)) {
-                            "找不到 ksud，确认设备已安装 KernelSU 并能正常授权 root"
-                        } else {
-                            "安装失败（退出码 ${result.exitCode}）"
-                        },
-                        result.output,
-                    )
-            }
-            lastFailure ?: InstallOutcome.Failure("安装失败")
         }
 }
 
