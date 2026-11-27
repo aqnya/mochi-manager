@@ -8,6 +8,9 @@ Mochi 风格界面的 KernelSU Manager 复刻工程（UI 层，参考 [KernelSU 
 - Android SDK：compileSdk 37、build-tools 37、platform-tools
 - Gradle 9.1.0（已带 wrapper）
 
+release 默认启用 R8（`isMinifyEnabled` + `isShrinkResources`），混淆映射在
+`app/build/outputs/mapping/release/mapping.txt`，排查线上崩溃时用它还原行号。
+
 在 Android Studio 里直接 `Open` 本目录即可，首次同步会自动生成 `local.properties`。命令行构建：
 
 ```bash
@@ -26,7 +29,8 @@ app/src/main/kotlin/com/nekosu/manager/
 ├── data/InstalledApps.kt    真实应用列表（PackageManager）+ 图标缓存
 ├── data/AppGroups.kt        按 uid 归并应用（共享 uid 组、代表应用、属主名）
 ├── data/SuProfile.kt        按 uid 的超级用户配置（本地 JSON 存储，含旧包名数据迁移）
-├── data/MockData.kt         仍为假数据的部分（设备信息、5 个模块）
+├── data/DeviceInfo.kt       真实设备信息采集（Build / proc / selinuxfs / PackageManager）
+├── data/MockData.kt         仍为假数据的部分（5 个模块、KernelSU 运行状态）
 ├── ui/MochiRoot.kt          底部四 Tab 容器
 ├── ui/home/                 首页
 ├── ui/superuser/            超级用户（真实应用列表）
@@ -42,7 +46,7 @@ app/src/main/kotlin/com/nekosu/manager/
 - 包名 `com.nekosu.manager`，应用名 `NekoSU`，minSdk 24 / targetSdk 37。
 - 超级用户页的应用列表来自真实 PackageManager（见 data/InstalledApps.kt）；
   授权是本地 SharedPreferences 记录，没有写进 KernelSU 白名单。
-- 模块、设备信息仍是静态模拟；设置页开关只改本地状态。
+- 首页设备信息为真实采集（见下文）；模块列表仍是静态模拟，设置页开关只改本地状态。
 - 共享 uid 的应用合并为一行，配置按 uid 存取，组内所有包共用（见下文）；
 - 应用配置页已移植（点击超级用户列表任意一行进入）；模块仓库、安装/刷写、外观、Sulog、关于、WebUI 尚未移植。
 - 二级页面用 `MochiNavHost`：iOS 侧推转场 + 跟手侧滑返回（预测性返回），路由在 `ui/superuser/SuperUserFlow.kt`。
@@ -81,3 +85,20 @@ KernelSU 的 su 白名单与 profile 都以 **uid** 为粒度，所以列表不�
 | 配置页 | 共享 uid 时多一段「共享 UID 应用」列组员，并说明授权对整组生效 |
 
 这样 `android.uid.system` 这类组不会出现多行互相矛盾的开关，授权一次即整组生效。
+
+## 设备信息采集
+
+首页「设备信息」不再写死 Pixel，全部取自本机，不需要 root：
+
+| 字段 | 来源 |
+| --- | --- |
+| 设备型号 | `ro.product.marketname`（ODM/vendor/system 前缀依次回退）→ 厂商 + `Build.MODEL` |
+| 系统版本 | `ro.mi.os.version.name` → `HyperOS 2.0.5.0`；`ro.miui.ui.version.name` → `MIUI`；再拼 `Android ${Build.VERSION.RELEASE}` |
+| 内核版本 | `Os.uname().release` → `/proc/version` → `os.version` |
+| SELinux | `/sys/fs/selinux/enforce`（1/0），不可读时反射 `android.os.SELinux.isSELinuxEnforced()`，selinuxfs 缺失则 Disabled |
+| Seccomp | `/proc/self/status` 的 `Seccomp:` 行（2 = Filter，1 = Strict） |
+| 管理器版本 | `PackageManager.getPackageInfo` 的 versionName + versionCode |
+| 系统指纹 | `Build.FINGERPRINT` |
+
+所有读取都单独 runCatching，某一项被 ROM 限制只影响那一格（显示「未知」），不会影响页面；
+采集在 `Dispatchers.IO` 完成，界面先渲染占位符再替换，避免闪一帧假数据。

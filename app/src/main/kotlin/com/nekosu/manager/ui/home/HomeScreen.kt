@@ -21,7 +21,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nekosu.manager.R
 import com.nekosu.manager.data.DeviceInfo
+import com.nekosu.manager.data.DeviceInfoRepository
 import com.nekosu.manager.data.MockData
 import com.nekosu.manager.data.SuProfileStore
 import com.nekosu.manager.ui.mochi.KsuTileColors
@@ -58,8 +61,10 @@ import ui.feice.mochi.theme.MochiTheme
 private val HeroShape = MochiRoundedRectangle(MochiListDefaults.SectionCorner)
 
 /**
- * 首页：状态卡、提示、统计、系统信息、支持入口。数据来自 [MockData]，
- * 之后接真实实现时把 state 换成 ViewModel 的 UiState 即可。
+ * 首页：状态卡、提示、统计、系统信息、支持入口。
+ *
+ * 「设备信息」来自 [DeviceInfoRepository]（Build / proc / selinuxfs / PackageManager），
+ * 其余仍为 [MockData]：模块列表与 KernelSU 运行状态还没有数据层。
  */
 @Composable
 fun HomeScreen(
@@ -69,6 +74,9 @@ fun HomeScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(Unit) { SuProfileStore.init(context) }
     val profiles by SuProfileStore.profiles.collectAsState()
+    // 采集在 IO 线程做，先渲染占位符，避免首页出现一帧假数据
+    var device by remember { mutableStateOf(DeviceInfo.Empty) }
+    LaunchedEffect(Unit) { device = DeviceInfoRepository.load(context) }
     MochiLazyLargeTitleScaffold(
         title = stringResource(R.string.app_name),
         modifier = modifier,
@@ -85,7 +93,7 @@ fun HomeScreen(
                 StatsRow(onOpenTab, grantedCount = profiles.values.count { it.allowSu })
             }
         }
-        item(key = "info") { SystemInfoSection(MockData.device) }
+        item(key = "info") { SystemInfoSection(device) }
         item(key = "support") { SupportSection() }
         item(key = "credit") { MochiCredit(stringResource(R.string.mochi_credit)) }
     }
@@ -233,17 +241,21 @@ private fun SystemInfoSection(info: DeviceInfo) {
         ) {
             InfoPair(
                 InfoCell("phone-portrait", stringResource(R.string.home_device_model), info.model),
-                InfoCell("apps", stringResource(R.string.home_manager_version), info.managerVersion),
+                InfoCell("apps", stringResource(R.string.home_system_version), info.system),
                 line,
             )
             InfoDivider(line)
             InfoPair(
+                InfoCell("hardware-chip", stringResource(R.string.home_kernel), shortKernelVersion(info.kernel)),
                 InfoCell("shield-half", stringResource(R.string.home_selinux_status), info.selinux),
-                InfoCell("lock-closed", stringResource(R.string.home_seccomp_status), info.seccomp),
                 line,
             )
             InfoDivider(line)
-            InfoCellView(InfoCell("hardware-chip", stringResource(R.string.home_kernel), shortKernelVersion(info.kernel)))
+            InfoPair(
+                InfoCell("lock-closed", stringResource(R.string.home_seccomp_status), info.seccomp),
+                InfoCell("extension-puzzle", stringResource(R.string.home_manager_version), info.managerVersion),
+                line,
+            )
             InfoDivider(line)
             InfoCellView(InfoCell("finger-print", stringResource(R.string.home_fingerprint), info.fingerprint))
         }

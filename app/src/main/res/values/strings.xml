@@ -6,6 +6,7 @@
     <string name="home_working_version">%1$s</string>
     <string name="home_new_version">发现新版本 v1.1.1，点击查看更新日志</string>
     <string name="home_device_model">设备型号</string>
+    <string name="home_system_version">系统版本</string>
     <string name="home_manager_version">管理器版本</string>
     <string name="home_selinux_status">SELinux</string>
     <string name="home_seccomp_status">Seccomp</string>

@@ -15,30 +15,10 @@ data class ModuleEntry(
     val hasUpdate: Boolean = false,
 )
 
-/** 首页系统信息。 */
-data class DeviceInfo(
-    val model: String,
-    val managerVersion: String,
-    val selinux: String,
-    val seccomp: String,
-    val kernel: String,
-    val fingerprint: String,
-)
-
 object MockData {
     const val ksuVersion = "v1.1.0-12851"
     const val kernelUapiVersion = "1.0"
     const val lkmMode = "GKI"
-
-    val device =
-        DeviceInfo(
-            model = "Pixel 8 Pro",
-            managerVersion = "NekoSU 1.0 (1)",
-            selinux = "Enforcing",
-            seccomp = "Filter",
-            kernel = "6.1.75-android14-11-g3a9c1d2e-ab12345678",
-            fingerprint = "google/husky/husky:15/AP4A.250105.002/12345678:user/release-keys",
-        )
 
     val modules =
         listOf(
