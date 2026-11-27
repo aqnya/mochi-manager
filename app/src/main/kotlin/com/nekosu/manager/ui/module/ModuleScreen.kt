@@ -43,8 +43,12 @@ import com.nekosu.manager.data.LocalModuleImport
 import com.nekosu.manager.data.ModuleEntry
 import com.nekosu.manager.data.ModuleInstallSession
 import com.nekosu.manager.data.ModuleStore
+import com.nekosu.manager.data.ModuleUpdate
+import com.nekosu.manager.data.ModuleUpdateInfo
 import com.nekosu.manager.data.StagedModule
+import com.nekosu.manager.ui.webui.webUiIntent
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
@@ -147,6 +151,57 @@ fun ModuleScreen(
                 if (staged.size == 1) beginInstall(staged) else importPhase = ImportPhase.Confirm(staged)
             }
         }
+
+    // —— 模块更新：检查 updateJson → 确认 → 下载 → 交给安装输出页 ——
+    var updatePhase by remember { mutableStateOf<UpdatePhase>(UpdatePhase.Idle) }
+    var updateJob by remember { mutableStateOf<Job?>(null) }
+
+    fun beginUpdateCheck(module: ModuleEntry) {
+        if (updateJob?.isActive == true) return
+        updatePhase = UpdatePhase.Checking
+        updateJob =
+            scope.launch {
+                updatePhase =
+                    when (val result = ModuleUpdate.check(module)) {
+                        is ModuleUpdate.CheckResult.Available -> UpdatePhase.Confirm(module, result.info)
+                        is ModuleUpdate.CheckResult.UpToDate -> UpdatePhase.UpToDate(result.version)
+                        ModuleUpdate.CheckResult.NoUpdateUrl -> UpdatePhase.Failed(context.getString(R.string.module_update_no_url))
+                        is ModuleUpdate.CheckResult.Failed ->
+                            UpdatePhase.Failed(context.getString(R.string.module_update_check_failed, result.message))
+                    }
+            }
+    }
+
+    fun beginUpdateDownload(
+        module: ModuleEntry,
+        info: ModuleUpdateInfo,
+    ) {
+        updatePhase = UpdatePhase.Downloading(module, 0f)
+        updateJob =
+            scope.launch {
+                try {
+                    val staged =
+                        ModuleUpdate.download(context, module, info) { progress ->
+                            updatePhase = UpdatePhase.Downloading(module, progress)
+                        }
+                    updatePhase = UpdatePhase.Idle
+                    // 下载好的包走和本地安装完全相同的输出页
+                    ModuleInstallSession.start(listOf(staged))
+                    onOpenInstall()
+                } catch (e: CancellationException) {
+                    updatePhase = UpdatePhase.Idle
+                    throw e
+                } catch (e: Throwable) {
+                    updatePhase = UpdatePhase.Failed(context.getString(R.string.module_update_download_failed, e.message ?: "网络错误"))
+                }
+            }
+    }
+
+    fun cancelUpdate() {
+        updateJob?.cancel()
+        updateJob = null
+        updatePhase = UpdatePhase.Idle
+    }
 
     val searching = query.isNotBlank()
     val installLabel = stringResource(R.string.module_install)
@@ -257,6 +312,8 @@ fun ModuleScreen(
                                 if (ModuleStore.setEnabled(module.id, !module.enabled)) refreshKey++
                             }
                         },
+                        onOpenWebUi = { context.startActivity(webUiIntent(context, module.id)) },
+                        onUpdate = { beginUpdateCheck(module) },
                         onUninstall = {
                             scope.launch {
                                 if (ModuleStore.uninstall(module.id)) refreshKey++
@@ -278,6 +335,115 @@ fun ModuleScreen(
         onDismiss = { importPhase = ImportPhase.Idle },
         onConfirm = { items -> beginInstall(items) },
     )
+
+    UpdateDialogs(
+        phase = updatePhase,
+        onDismiss = { updatePhase = UpdatePhase.Idle },
+        onConfirm = { module, info -> beginUpdateDownload(module, info) },
+        onCancelBusy = ::cancelUpdate,
+    )
+}
+
+/** 更新链路的界面状态。Checking / Downloading 是长任务，取消要走 [cancelUpdate]。 */
+private sealed interface UpdatePhase {
+    data object Idle : UpdatePhase
+
+    data object Checking : UpdatePhase
+
+    data class Confirm(
+        val module: ModuleEntry,
+        val info: ModuleUpdateInfo,
+    ) : UpdatePhase
+
+    data class Downloading(
+        val module: ModuleEntry,
+        val progress: Float,
+    ) : UpdatePhase
+
+    data class UpToDate(
+        val version: String,
+    ) : UpdatePhase
+
+    data class Failed(
+        val message: String,
+    ) : UpdatePhase
+}
+
+/** 更新过程中的各状态弹窗；Checking/Downloading 的关闭就是取消任务。 */
+@Composable
+private fun UpdateDialogs(
+    phase: UpdatePhase,
+    onDismiss: () -> Unit,
+    onConfirm: (ModuleEntry, ModuleUpdateInfo) -> Unit,
+    onCancelBusy: () -> Unit,
+) {
+    val icon: @Composable () -> Unit = { MochiIonicon("cloud-download", size = 44.dp) }
+    when (phase) {
+        UpdatePhase.Idle -> Unit
+
+        UpdatePhase.Checking ->
+            MochiDialog(
+                visible = true,
+                onDismissRequest = onCancelBusy,
+                title = stringResource(R.string.module_update_checking),
+                icon = icon,
+                actions = persistentListOf(),
+            )
+
+        is UpdatePhase.Confirm ->
+            MochiDialog(
+                visible = true,
+                onDismissRequest = onDismiss,
+                title = stringResource(R.string.module_update_confirm_title, phase.module.name),
+                message = stringResource(R.string.module_update_confirm_message, phase.info.version),
+                icon = icon,
+                actions =
+                    persistentListOf(
+                        MochiDialogAction(stringResource(android.R.string.cancel), MochiDialogActionRole.Cancel),
+                        MochiDialogAction(
+                            stringResource(R.string.module_update_download),
+                            MochiDialogActionRole.Primary,
+                            onClick = { onConfirm(phase.module, phase.info) },
+                        ),
+                    ),
+            )
+
+        is UpdatePhase.Downloading ->
+            MochiDialog(
+                visible = true,
+                onDismissRequest = onCancelBusy,
+                title = stringResource(R.string.repo_downloading, (phase.progress * 100).toInt()),
+                message = phase.module.name,
+                icon = icon,
+                actions = persistentListOf(),
+            )
+
+        is UpdatePhase.UpToDate ->
+            MochiDialog(
+                visible = true,
+                onDismissRequest = onDismiss,
+                title = stringResource(R.string.module_update_up_to_date_title),
+                message = stringResource(R.string.module_update_up_to_date, phase.version),
+                icon = icon,
+                actions =
+                    persistentListOf(
+                        MochiDialogAction(stringResource(android.R.string.ok), MochiDialogActionRole.Primary, onClick = onDismiss),
+                    ),
+            )
+
+        is UpdatePhase.Failed ->
+            MochiDialog(
+                visible = true,
+                onDismissRequest = onDismiss,
+                title = stringResource(R.string.module_update),
+                message = phase.message,
+                icon = { MochiIonicon("alert-circle", size = 44.dp) },
+                actions =
+                    persistentListOf(
+                        MochiDialogAction(stringResource(android.R.string.ok), MochiDialogActionRole.Primary, onClick = onDismiss),
+                    ),
+            )
+    }
 }
 
 /** 本地 ZIP 入口的两种对话框：多选确认、选包失败。进度与结果都在安装输出页里。 */
@@ -348,6 +514,8 @@ private sealed interface ImportPhase {
 private fun ModuleCard(
     module: ModuleEntry,
     onToggle: () -> Unit,
+    onOpenWebUi: () -> Unit,
+    onUpdate: () -> Unit,
     onUninstall: () -> Unit,
     onUndoUninstall: () -> Unit,
 ) {
@@ -439,8 +607,8 @@ private fun ModuleCard(
                 ) {
                     val usable = module.enabled && !module.remove
                     if (usable && module.hasAction) CardButton("play", actionLabel, {})
-                    if (usable && module.hasWebUi) CardButton("globe", openLabel, {})
-                    if (module.hasUpdate && !module.remove) CardButton("cloud-download", stringResource(R.string.module_update), {})
+                    if (usable && module.hasWebUi) CardButton("globe", openLabel, onOpenWebUi)
+                    if (module.hasUpdate && !module.remove) CardButton("cloud-download", stringResource(R.string.module_update), onUpdate)
                     if (module.remove) CardButton("arrow-undo", stringResource(R.string.undo), onUndoUninstall)
                 }
                 if (!module.remove) {

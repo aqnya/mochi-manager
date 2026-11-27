@@ -8,6 +8,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "NekoSU/Shell"
@@ -117,6 +118,39 @@ object RootShell {
         command: String,
         timeoutSeconds: Long = 60L,
     ): RootShellResult = run(listOf("sh", "-c", command), timeoutSeconds)
+
+    /**
+     * 以 root 打开一条命令的原始字节流（供模块 WebUI 的文件服务用）。
+     *
+     * 和 [exec] 的区别：不合并 stderr、不做超时收口，返回的就是进程 stdout——
+     * 二进制文件（图片、字体）必须字节干净；流由调用方消费，读完 `cat` 自然退出。
+     * stderr 由一个守护线程持续排空，防止写满管道把进程挂住。
+     */
+    fun openSuReadStream(command: String): InputStream? {
+        for (su in SU_CANDIDATES) {
+            val process =
+                try {
+                    ProcessBuilder(listOf(su, "-c", command)).start()
+                } catch (e: IOException) {
+                    continue
+                }
+            // 已经退出且失败：su 存在但命令本身跑不起来，换下一个候选
+            val exited = runCatching { process.exitValue() }.getOrNull()
+            if (exited != null && exited != 0) {
+                process.destroy()
+                continue
+            }
+            Thread({
+                try {
+                    process.errorStream.use { it.readBytes() }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "排空 stderr 失败：${e.message}")
+                }
+            }, "nekosu-su-stderr").apply { isDaemon = true }.start()
+            return process.inputStream
+        }
+        return null
+    }
 
     /**
      * 探测能不能拿到 root。

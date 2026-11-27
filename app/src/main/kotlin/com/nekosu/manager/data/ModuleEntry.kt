@@ -18,4 +18,8 @@ data class ModuleEntry(
     val hasAction: Boolean = false,
     val hasWebUi: Boolean = false,
     val hasUpdate: Boolean = false,
+    /** `module.prop` 的 versionCode；ncore 的列表 JSON 没给时是 0，更新检查会再读一次 prop。 */
+    val versionCode: Long = 0L,
+    /** `module.prop` 的 updateJson，模块更新的检查地址；缺省为空。 */
+    val updateJson: String = "",
 )

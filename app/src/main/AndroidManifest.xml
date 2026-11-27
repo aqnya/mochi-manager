@@ -43,6 +43,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          模块 WebUI 的宿主。声明 configChanges 让旋转/深浅色切换不重建 Activity，
+          WebView 不会整页重载；页面内部自己响应主题 CSS 变量。
+        -->
+        <activity
+            android:name=".ui.webui.WebUIActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density|uiMode|locale|layoutDirection"
+            android:exported="false"
+            android:theme="@style/Theme.NekoSU" />
     </application>
 
 </manifest>

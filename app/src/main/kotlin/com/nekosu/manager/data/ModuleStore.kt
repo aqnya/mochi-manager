@@ -74,6 +74,8 @@ object ModuleStore {
                         hasAction = item.flag("action"),
                         hasWebUi = item.flag("web") || item.flag("hasWebUi"),
                         hasUpdate = item.flag("update"),
+                        versionCode = item.optLong("versionCode"),
+                        updateJson = item.text("updateJson"),
                     ),
                 )
             }

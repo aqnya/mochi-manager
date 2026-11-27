@@ -89,6 +89,28 @@ class ModuleStoreTest {
     }
 
     @Test
+    fun `versionCode 与 updateJson 来自列表 JSON`() {
+        val json =
+            """
+            [
+              {
+                "id": "m",
+                "versionCode": 42,
+                "updateJson": "https://example.com/m.json"
+              },
+              {"id": "n"}
+            ]
+            """.trimIndent()
+
+        val list = ModuleStore.parse(json)
+
+        assertEquals(42L, list[0].versionCode)
+        assertEquals("https://example.com/m.json", list[0].updateJson)
+        assertEquals(0L, list[1].versionCode)
+        assertEquals("", list[1].updateJson)
+    }
+
+    @Test
     fun `混入 stderr 噪音时仍能解析`() {
         // RootShell 合并了 stderr，su 或内核的提示行会贴在 JSON 前后
         val raw =

@@ -123,6 +123,8 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
+    // 模块 WebUI：WebViewAssetLoader 把模块 webroot 挂成 https 站点
+    implementation(libs.androidx.webkit)
 
     // Arch Components
     implementation(libs.androidx.lifecycle.runtime.compose)
