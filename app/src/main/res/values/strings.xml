@@ -100,6 +100,10 @@
     <string name="profile_selinux_hint">形如 u:r:su:s0</string>
     <string name="profile_capabilities">Capabilities</string>
     <string name="profile_capabilities_row">能力位</string>
+    <string name="profile_capabilities_search">搜索能力位</string>
+    <string name="profile_capabilities_selected">已选 %1$d/%2$d</string>
+    <string name="select_all">全选</string>
+    <string name="clear_all">清空</string>
     <string name="profile_none">未选择</string>
     <string name="profile_section_module">模块</string>
     <string name="profile_umount_modules">卸载模块</string>

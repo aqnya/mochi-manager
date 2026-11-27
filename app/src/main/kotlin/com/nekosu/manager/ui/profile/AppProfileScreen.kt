@@ -2,6 +2,8 @@ package com.nekosu.manager.ui.profile
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
@@ -22,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.nekosu.manager.R
 import com.nekosu.manager.data.AppGroup
 import com.nekosu.manager.data.SuCapabilities
+import com.nekosu.manager.data.SuCapabilityCategories
 import com.nekosu.manager.data.SuGroups
 import com.nekosu.manager.data.SuProfile
 import com.nekosu.manager.data.SuProfileStore
@@ -30,6 +33,8 @@ import com.nekosu.manager.ui.mochi.KsuTile
 import com.nekosu.manager.ui.mochi.KsuTileColors
 import com.nekosu.manager.ui.mochi.MochiFootnote
 import kotlinx.collections.immutable.persistentListOf
+import ui.feice.mochi.basic.MochiButton
+import ui.feice.mochi.basic.MochiButtonStyle
 import ui.feice.mochi.basic.MochiDialog
 import ui.feice.mochi.basic.MochiDialogAction
 import ui.feice.mochi.basic.MochiDialogActionRole
@@ -150,7 +155,7 @@ fun AppProfileScreen(
 
             item(key = "caps") {
                 MochiListSection(header = stringResource(R.string.profile_capabilities)) {
-                    MultiSelectRow(
+                    CapabilitySelectRow(
                         title = stringResource(R.string.profile_capabilities_row),
                         summary =
                             if (profile.capabilities.isEmpty()) {
@@ -158,11 +163,8 @@ fun AppProfileScreen(
                             } else {
                                 profile.capabilities.sorted().joinToString(", ")
                             },
-                        options = SuCapabilities,
-                        selected = profile.capabilities.mapNotNull { c -> SuCapabilities.firstOrNull { it.name == c } }.toSet(),
-                        label = { it.name.removePrefix("CAP_") },
-                        description = { it.desc },
-                    ) { picked -> update(profile.copy(capabilities = picked.map { it.name }.toSet())) }
+                        selected = profile.capabilities,
+                    ) { picked -> update(profile.copy(capabilities = picked)) }
                 }
             }
         }
@@ -362,6 +364,120 @@ private fun <T> MultiSelectRow(
                         checked = on,
                         onClick = { draft = if (on) draft - option else draft + option },
                     )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 能力位选择行：全部 41 个 Linux capability，弹窗内搜索过滤、按类分组展示。
+ *
+ * 相比通用 [MultiSelectRow] 的增强：平铺 41 项难以定位，这里加了搜索框
+ * （按名字或描述过滤，名字带不带 CAP_ 前缀都能搜到）、按类别的段头、
+ * 「全选/清空」快捷键与已选计数。
+ */
+@Composable
+private fun CapabilitySelectRow(
+    title: String,
+    summary: String,
+    selected: Set<String>,
+    onConfirm: (Set<String>) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    var draft by remember(selected) { mutableStateOf(selected) }
+    var query by remember { mutableStateOf("") }
+    MochiListRow(title, subtitle = summary, chevron = true, onClick = { open = true })
+    MochiDialog(
+        visible = open,
+        onDismissRequest = {
+            open = false
+            draft = selected
+            query = ""
+        },
+        title = title,
+        actions =
+            persistentListOf(
+                MochiDialogAction(stringResource(android.R.string.cancel), MochiDialogActionRole.Cancel) {
+                    open = false
+                    draft = selected
+                    query = ""
+                },
+                MochiDialogAction(stringResource(android.R.string.ok), MochiDialogActionRole.Primary) {
+                    onConfirm(draft)
+                    open = false
+                    query = ""
+                },
+            ),
+    ) {
+        MochiTextField(
+            value = query,
+            onValueChange = { query = it },
+            placeholder = stringResource(R.string.profile_capabilities_search),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MochiButton(style = MochiButtonStyle.Tonal, onClick = { draft = SuCapabilities.map { it.name }.toSet() }) {
+                Text(stringResource(R.string.select_all), style = MochiTheme.textStyles.footnote)
+            }
+            MochiButton(style = MochiButtonStyle.Tonal, onClick = { draft = emptySet() }) {
+                Text(stringResource(R.string.clear_all), style = MochiTheme.textStyles.footnote)
+            }
+            Spacer(Modifier.weight(1f))
+            Text(
+                stringResource(R.string.profile_capabilities_selected, draft.size, SuCapabilities.size),
+                style = MochiTheme.textStyles.footnote,
+                color = MochiTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        MochiDialogScrollContent(maxHeight = 420.dp) {
+            val q = query.trim()
+            val matches =
+                remember(q) {
+                    if (q.isEmpty()) {
+                        SuCapabilities
+                    } else {
+                        SuCapabilities.filter {
+                            it.name.contains(q, ignoreCase = true) ||
+                                it.name.removePrefix("CAP_").contains(q, ignoreCase = true) ||
+                                it.desc.contains(q, ignoreCase = true)
+                        }
+                    }
+                }
+            if (matches.isEmpty()) {
+                Text(
+                    stringResource(R.string.mochi_no_results),
+                    style = MochiTheme.textStyles.footnote.copy(textAlign = TextAlign.Center),
+                    color = MochiTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                )
+            }
+            SuCapabilityCategories.forEach { category ->
+                val group = matches.filter { it.category == category }
+                if (group.isEmpty()) return@forEach
+                Text(
+                    category,
+                    style = MochiTheme.textStyles.footnote,
+                    color = MochiTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 4.dp),
+                )
+                MochiListCard {
+                    group.forEach { cap ->
+                        val on = cap.name in draft
+                        MochiListRow(
+                            cap.name.removePrefix("CAP_"),
+                            subtitle = cap.desc,
+                            checked = on,
+                            onClick = {
+                                draft = if (on) draft - cap.name else draft + cap.name
+                            },
+                        )
+                    }
                 }
             }
         }

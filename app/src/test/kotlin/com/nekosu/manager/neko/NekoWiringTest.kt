@@ -8,6 +8,7 @@ import com.nekosu.manager.data.capsMask
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
@@ -57,17 +58,26 @@ class NekoWiringTest {
 
     @Test
     fun `内置能力位的编号与 Linux capability 一致`() {
+        // 全部 41 项（CAP_LAST_CAP = CAP_CHECKPOINT_RESTORE = 40），
+        // 位编号连续且不重复，界面的分组列表不会漏项
+        assertEquals(41, SuCapabilities.size)
+        assertEquals((0..40).toList(), SuCapabilities.map { it.bit }.sorted())
         val expected =
             mapOf(
+                "CAP_CHOWN" to 0,
                 "CAP_DAC_OVERRIDE" to 1,
-                "CAP_DAC_READ_SEARCH" to 2,
-                "CAP_SYS_ADMIN" to 21,
+                "CAP_SYS_CHROOT" to 18,
                 "CAP_SYS_PTRACE" to 19,
+                "CAP_SYS_ADMIN" to 21,
                 "CAP_NET_ADMIN" to 12,
-                "CAP_NET_RAW" to 13,
-                "CAP_SETUID" to 7,
-                "CAP_SETGID" to 6,
+                "CAP_SETFCAP" to 31,
+                "CAP_PERFMON" to 38,
+                "CAP_BPF" to 39,
+                "CAP_CHECKPOINT_RESTORE" to 40,
             )
-        assertEquals(expected, SuCapabilities.associate { it.name to it.bit })
+        val actual = SuCapabilities.associate { it.name to it.bit }
+        expected.forEach { (name, bit) -> assertEquals(bit, actual[name]) }
+        // 每一项都有分类与中文描述，弹窗分组展示才有内容
+        assertTrue(SuCapabilities.all { it.category.isNotBlank() && it.desc.isNotBlank() })
     }
 }

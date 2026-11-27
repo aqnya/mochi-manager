@@ -81,19 +81,64 @@ data class SuCapability(
     val desc: String,
     /** Linux capability 编号；内核 profile 的 caps 就是 `1L shl bit` 的按位或。 */
     val bit: Int,
+    /** 界面分组：全部 41 项平铺难找，按文件系统/进程/网络等归类展示。 */
+    val category: String,
 )
 
+/**
+ * 全部 Linux capability（对齐内核 `include/uapi/linux/capability.h`，
+ * CAP_LAST_CAP = CAP_CHECKPOINT_RESTORE = 40）。
+ *
+ * 位编号与内核保持一致，`capsMask`/`capsFromMask` 直接按位映射，
+ * 不会漏掉 nor 报错——未知名字双向都安全。
+ */
 val SuCapabilities =
     listOf(
-        SuCapability("CAP_DAC_OVERRIDE", "绕过文件读写权限检查", 1),
-        SuCapability("CAP_DAC_READ_SEARCH", "绕过文件与目录的读权限检查", 2),
-        SuCapability("CAP_SYS_ADMIN", "系统管理（挂载、命名空间等）", 21),
-        SuCapability("CAP_SYS_PTRACE", "调试与读写其他进程内存", 19),
-        SuCapability("CAP_NET_ADMIN", "网络接口与路由配置", 12),
-        SuCapability("CAP_NET_RAW", "原始套接字", 13),
-        SuCapability("CAP_SETUID", "切换用户 ID", 7),
-        SuCapability("CAP_SETGID", "切换用户组 ID", 6),
+        SuCapability("CAP_CHOWN", "修改文件属主与属组", 0, "文件系统"),
+        SuCapability("CAP_DAC_OVERRIDE", "绕过文件读写执行权限检查", 1, "文件系统"),
+        SuCapability("CAP_DAC_READ_SEARCH", "绕过文件与目录读权限检查", 2, "文件系统"),
+        SuCapability("CAP_FOWNER", "绕过文件属主身份检查", 3, "文件系统"),
+        SuCapability("CAP_FSETID", "设置文件的 setuid/setgid 位", 4, "文件系统"),
+        SuCapability("CAP_LINUX_IMMUTABLE", "设置文件不可变属性", 9, "文件系统"),
+        SuCapability("CAP_MKNOD", "创建设备文件", 27, "文件系统"),
+        SuCapability("CAP_LEASE", "建立文件租借", 28, "文件系统"),
+        SuCapability("CAP_SETFCAP", "设置文件能力", 31, "文件系统"),
+        SuCapability("CAP_KILL", "向任意进程发送信号", 5, "进程"),
+        SuCapability("CAP_SETGID", "切换用户组 ID", 6, "进程"),
+        SuCapability("CAP_SETUID", "切换用户 ID", 7, "进程"),
+        SuCapability("CAP_SETPCAP", "授予/收回其他进程能力", 8, "进程"),
+        SuCapability("CAP_SYS_PTRACE", "调试与读写其他进程内存", 19, "进程"),
+        SuCapability("CAP_SYS_PACCT", "进程记账", 20, "进程"),
+        SuCapability("CAP_SYS_NICE", "提升进程优先级", 23, "进程"),
+        SuCapability("CAP_WAKE_ALARM", "触发唤醒系统的闹钟", 35, "进程"),
+        SuCapability("CAP_CHECKPOINT_RESTORE", "进程快照与恢复（CRIU）", 40, "进程"),
+        SuCapability("CAP_NET_BIND_SERVICE", "绑定 1024 以下特权端口", 10, "网络"),
+        SuCapability("CAP_NET_BROADCAST", "网络广播与组播监听", 11, "网络"),
+        SuCapability("CAP_NET_ADMIN", "网络接口、路由与防火墙配置", 12, "网络"),
+        SuCapability("CAP_NET_RAW", "使用原始套接字", 13, "网络"),
+        SuCapability("CAP_IPC_LOCK", "锁定内存（防换出）", 14, "IPC 与资源"),
+        SuCapability("CAP_IPC_OWNER", "绕过 IPC 对象属主检查", 15, "IPC 与资源"),
+        SuCapability("CAP_SYS_RESOURCE", "突破系统资源限制", 24, "IPC 与资源"),
+        SuCapability("CAP_BLOCK_SUSPEND", "阻止系统休眠", 36, "IPC 与资源"),
+        SuCapability("CAP_SYS_MODULE", "加载与卸载内核模块", 16, "系统与内核"),
+        SuCapability("CAP_SYS_RAWIO", "原始 I/O（/dev/mem、裸块设备）", 17, "系统与内核"),
+        SuCapability("CAP_SYS_CHROOT", "使用 chroot", 18, "系统与内核"),
+        SuCapability("CAP_SYS_ADMIN", "系统管理（挂载、命名空间等）", 21, "系统与内核"),
+        SuCapability("CAP_SYS_BOOT", "重启系统", 22, "系统与内核"),
+        SuCapability("CAP_SYS_TIME", "设置系统时钟", 25, "系统与内核"),
+        SuCapability("CAP_SYS_TTY_CONFIG", "配置 TTY 设备", 26, "系统与内核"),
+        SuCapability("CAP_SYSLOG", "读取内核日志", 34, "系统与内核"),
+        SuCapability("CAP_PERFMON", "性能监控（perf 事件）", 38, "系统与内核"),
+        SuCapability("CAP_BPF", "创建与管理 BPF 程序", 39, "系统与内核"),
+        SuCapability("CAP_AUDIT_WRITE", "写入内核审计日志", 29, "安全与审计"),
+        SuCapability("CAP_AUDIT_CONTROL", "配置内核审计", 30, "安全与审计"),
+        SuCapability("CAP_MAC_OVERRIDE", "绕过强制访问控制（SELinux）检查", 32, "安全与审计"),
+        SuCapability("CAP_MAC_ADMIN", "配置强制访问控制策略", 33, "安全与审计"),
+        SuCapability("CAP_AUDIT_READ", "读取内核审计日志", 37, "安全与审计"),
     )
+
+/** [SuCapabilities] 的分组顺序，界面按这个顺序出段头。 */
+val SuCapabilityCategories = SuCapabilities.map { it.category }.distinct()
 
 /** 能力名集合 → 内核 caps 位（未知名字忽略）。 */
 fun capsMask(names: Set<String>): Long =
