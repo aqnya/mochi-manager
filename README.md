@@ -6,12 +6,44 @@ Mochi 风格界面的 KernelSU Manager 复刻工程（UI 层，参考 [KernelSU 
 
 - JDK 17（Gradle 运行与编译目标）
 - Android SDK：compileSdk 37、build-tools 37、platform-tools
-- Gradle 9.1.0（已带 wrapper）
+- AGP 9.1.1 + Gradle 9.3.1（已带 wrapper；AGP 9.0.x 最高只支持 API 36，从 9.1 起才正式支持 37）
 
 release 默认启用 R8（`isMinifyEnabled` + `isShrinkResources`），混淆映射在
 `app/build/outputs/mapping/release/mapping.txt`，排查线上崩溃时用它还原行号。
 
-在 Android Studio 里直接 `Open` 本目录即可，首次同步会自动生成 `local.properties`。命令行构建：
+**APK 由 GitHub Actions 构建，本地不再编译出包。** `.github/workflows/build.yml` 在
+main 的每次 push 与手动 `workflow_dispatch` 上跑单测 + 签名 release，产物是 artifact
+`NekoSU-release-signed`（含 APK 与 SHA-256 清单）；PR 只跑单测 + debug 包。
+
+### release 签名配置
+
+`app/build.gradle.kts` 的 `signingConfigs.release` 从环境变量（CI）或
+`local.properties`（本地应急）读四项材料，缺任一项 `assembleRelease` 会报未签名而不是
+产出装不上的废包。CI 在仓库 **Settings → Secrets and variables → Actions → New repository secret**
+配四个 secret（值与本地 `mochi` keystore 一致）：
+
+| Secret | 值 |
+| --- | --- |
+| `NEKOSU_KEYSTORE_BASE64` | `base64 -w0 /path/to/mochi-release.keystore` 的输出 |
+| `NEKOSU_KEYSTORE_PASSWORD` | `mochi2026` |
+| `NEKOSU_KEY_ALIAS` | `mochi` |
+| `NEKOSU_KEY_PASSWORD` | `mochi2026` |
+
+证书 SHA-256 指纹固定为 `ce69488700849f24df4ec9cbf7c88652d45749bc68df3981003308d221d5969f`，
+流水线里 `apksigner verify --print-certs` 会打印它供核对；换证书会让内核验签失败。
+
+本地要应急构建签名包时，在 `local.properties`（已 gitignore，不要提交）写：
+
+```properties
+nekosu.keystoreFile=/path/to/mochi-release.keystore
+nekosu.keystorePassword=mochi2026
+nekosu.keyAlias=mochi
+nekosu.keyPassword=mochi2026
+```
+
+然后 `./gradlew assembleRelease` 直接产出已签名 APK（无需再手动 zipalign / apksigner）。
+测试 JVM 需要 JDK 21：本地自动找 `/opt/jdk-21.0.13.1+2`，CI 由 `NEKOSU_TEST_JAVA_HOME`
+指向 setup-java 装的 21。普通命令行构建（debug）：
 
 ```bash
 export ANDROID_HOME=/path/to/android-sdk
@@ -19,7 +51,7 @@ export ANDROID_HOME=/path/to/android-sdk
 ```
 
 如果 `services.gradle.org` 下载超时，可先把 wrapper 的 `distributionUrl` 指到镜像
-（如 `https://mirrors.cloud.tencent.com/gradle/gradle-9.1.0-bin.zip`），或本机装好 Gradle 9.1.0 直接 `gradle assembleDebug`。
+（如 `https://mirrors.cloud.tencent.com/gradle/gradle-9.3.1-bin.zip`），或本机装好 Gradle 9.3.1 直接 `gradle assembleDebug`。
 
 ## 结构
 
