@@ -50,7 +50,7 @@ import ui.feice.mochi.basic.MochiButton
 import ui.feice.mochi.basic.MochiButtonStyle
 import ui.feice.mochi.basic.MochiEmptyState
 import ui.feice.mochi.basic.MochiItem
-import com.nekosu.manager.ui.rememberHideKeyboardOnSearch
+import com.nekosu.manager.ui.rememberHideKeyboard
 import ui.feice.mochi.basic.MochiSearchBar
 import ui.feice.mochi.basic.Text
 import ui.feice.mochi.icons.MochiIonicon
@@ -97,7 +97,7 @@ fun SuperUserScreen(
     var reversed by rememberSaveable { mutableStateOf(false) }
     var showSystem by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
-    val hideKeyboard = rememberHideKeyboardOnSearch()
+    val hideKeyboard = rememberHideKeyboard()
 
     // 读列表串行化：下拉刷新与 reloadKey（权限回调、从设置页返回、重试）不会同时遍历 PackageManager
     val loadMutex = remember { Mutex() }

@@ -62,12 +62,18 @@ private val rootTabs =
 @Composable
 fun MochiRoot() {
     val navigator = rememberMochiNavigator(root = RouteMain)
+    val hideKeyboard = rememberHideKeyboard()
     // 二级页的对象（应用组、仓库条目）放在导航栈外面，页面只按路由取值
     var openedGroup by remember { mutableStateOf<AppGroup?>(null) }
     var openedRepoModule by remember { mutableStateOf<RepoModule?>(null) }
     var moduleReloadKey by remember { mutableIntStateOf(0) }
 
     MochiNavHost(navigator = navigator) { route ->
+        // 推入二级页时自动收键盘：从搜索结果点进详情后，输入法还盖着页面的情况
+        // 在真机上很常见，详情页的开关/按钮会被挡住。根标签页不动，避免打断搜索。
+        LaunchedEffect(route) {
+            if (route != RouteMain) hideKeyboard()
+        }
         when (route) {
             RouteAppProfile -> {
                 val group = openedGroup

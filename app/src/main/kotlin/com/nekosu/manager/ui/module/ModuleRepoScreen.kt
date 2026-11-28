@@ -36,7 +36,7 @@ import ui.feice.mochi.basic.MochiButton
 import ui.feice.mochi.basic.MochiButtonStyle
 import ui.feice.mochi.basic.MochiEmptyState
 import ui.feice.mochi.basic.MochiItem
-import com.nekosu.manager.ui.rememberHideKeyboardOnSearch
+import com.nekosu.manager.ui.rememberHideKeyboard
 import ui.feice.mochi.basic.MochiSearchBar
 import ui.feice.mochi.basic.Text
 import ui.feice.mochi.icons.MochiIonicon
@@ -108,7 +108,7 @@ fun ModuleRepoScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableStateOf(RepoSort.UPDATED) }
     var menu by remember { mutableStateOf(false) }
-    val hideKeyboard = rememberHideKeyboardOnSearch()
+    val hideKeyboard = rememberHideKeyboard()
 
     suspend fun load() {
         loading = true

@@ -30,7 +30,7 @@ import com.nekosu.manager.data.SuCapabilityCategories
 import com.nekosu.manager.data.SuGroups
 import com.nekosu.manager.data.SuProfile
 import com.nekosu.manager.data.isValidSelinuxContext
-import com.nekosu.manager.ui.rememberHideKeyboardOnSearch
+import com.nekosu.manager.ui.rememberHideKeyboard
 import com.nekosu.manager.data.SuProfileStore
 import com.nekosu.manager.ui.mochi.AppIcon
 import com.nekosu.manager.ui.mochi.KsuTile
@@ -391,7 +391,7 @@ private fun CapabilitySelectRow(
     var open by remember { mutableStateOf(false) }
     var draft by remember(selected) { mutableStateOf(selected) }
     var query by remember { mutableStateOf("") }
-    val hideKeyboard = rememberHideKeyboardOnSearch()
+    val hideKeyboard = rememberHideKeyboard()
     MochiListRow(title, subtitle = summary, chevron = true, onClick = { open = true })
     MochiDialog(
         visible = open,

@@ -64,7 +64,7 @@ import ui.feice.mochi.basic.MochiDialogAction
 import ui.feice.mochi.basic.MochiDialogActionRole
 import ui.feice.mochi.basic.MochiEmptyState
 import ui.feice.mochi.basic.MochiItem
-import com.nekosu.manager.ui.rememberHideKeyboardOnSearch
+import com.nekosu.manager.ui.rememberHideKeyboard
 import ui.feice.mochi.basic.MochiSearchBar
 import ui.feice.mochi.basic.MochiSwitch
 import ui.feice.mochi.basic.Text
@@ -98,7 +98,7 @@ fun ModuleScreen(
     var actionFirst by rememberSaveable { mutableStateOf(false) }
     var enabledFirst by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
-    val hideKeyboard = rememberHideKeyboardOnSearch()
+    val hideKeyboard = rememberHideKeyboard()
 
     // 模块更新：列表载入后逐个检查 updateJson，确认有新版才亮出更新按钮；
     // 点击 → 确认 → 下载 → 交给安装输出页
@@ -346,7 +346,10 @@ fun ModuleScreen(
                                 if (ModuleStore.setEnabled(module.id, !module.enabled)) refreshKey++
                             }
                         },
-                        onOpenWebUi = { context.startActivity(webUiIntent(context, module.id)) },
+                        onOpenWebUi = {
+                            hideKeyboard()
+                            context.startActivity(webUiIntent(context, module.id))
+                        },
                         onUpdate = {
                             // 按钮只在查到新版后才出现，这里直接进确认
                             updates[module.id]?.let { beginUpdateConfirm(module, it) }
