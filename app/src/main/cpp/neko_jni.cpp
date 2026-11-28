@@ -30,7 +30,7 @@
 #include <vector>
 
 #include "uapi/ioctl.h"
-#include "store/store.h"
+#include "nksu_store.h"
 
 #define TAG "NekoSU/Native"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -220,23 +220,26 @@ template <typename Op>
 [[noreturn]] void store_child(Op op) {
     if (setresuid(0, 0, 0) != 0 || getuid() != 0) _exit(1);
     const int32_t rc = op();
-    _exit(rc == 0 ? 0 : 2);
+    if (rc != NKSU_STORE_OK) {
+        LOGE("libstore: %s (rc=%d)", nksu_store_last_error(), rc);
+    }
+    _exit(rc == NKSU_STORE_OK ? 0 : 2);
 }
 
-/// 把一条 profile upsert 到落盘存储（fork 子进程临时提权），成功返回 true。
-/// 与上游 `store::profile::save` 同一份文件、同一套二进制格式。
+/// 把一条 profile 写进落盘存储（fork 子进程临时提权），成功返回 true。
+/// libstore 是上游 neko/store 编出来的 cdylib，与 ncore 共用同一份实现。
 bool persist_profile(uint32_t uid, uint32_t root_uid, uint64_t caps, int32_t ns, const char* domain) {
-    nksu_profile entry = {};
+    // libstore 会在返回前把 domain 拷贝走，这里直接借调用方的指针即可。
+    nksu_profile_entry entry = {};
     entry.uid = uid;
     entry.root_uid = root_uid;
     entry.caps = caps;
     entry.ns = ns;
-    std::strncpy(entry.domain, domain, NKSU_STORE_DOMAIN_MAX - 1);
-    entry.domain[NKSU_STORE_DOMAIN_MAX - 1] = '\0';
+    entry.domain = domain == nullptr ? "" : domain;
 
     const pid_t pid = fork();
     if (pid < 0) return false;
-    if (pid == 0) store_child([&] { return nksu_store_upsert(&entry); });
+    if (pid == 0) store_child([&] { return nksu_store_profile_save(&entry); });
     return wait_child(pid);
 }
 
@@ -244,16 +247,19 @@ bool persist_profile(uint32_t uid, uint32_t root_uid, uint64_t caps, int32_t ns,
 bool remove_persisted_profile(uint32_t uid) {
     const pid_t pid = fork();
     if (pid < 0) return false;
-    if (pid == 0) store_child([&] { return nksu_store_delete(uid); });
+    if (pid == 0) store_child([&] { return nksu_store_profile_delete(uid); });
     return wait_child(pid);
 }
 
-/// 把一个 feature 开关 upsert 到落盘存储（fork 子进程临时提权），成功返回 true。
-/// 与上游 store::feature::save_feature 同一份文件、同一语义。
+/// 把一个 feature 开关写进落盘存储（fork 子进程临时提权），成功返回 true。
 bool persist_feature(int32_t id, uint64_t value) {
+    nksu_feature_entry entry = {};
+    entry.id = id;
+    entry.value = value;
+
     const pid_t pid = fork();
     if (pid < 0) return false;
-    if (pid == 0) store_child([&] { return nksu_store_set_feature(id, value); });
+    if (pid == 0) store_child([&] { return nksu_store_feature_save(&entry); });
     return wait_child(pid);
 }
 
@@ -317,7 +323,8 @@ Java_com_nekosu_manager_neko_NekoNative_nativeSetProfile(
     put_u64(data, FMAC_OFF_CAPS, static_cast<uint64_t>(caps));
 
     // 拷到本地再释放：后面 fork 落盘时还要用这个字符串，不能指望 JNI 的指针一直有效
-    char domain_buf[NKSU_STORE_DOMAIN_MAX] = {};
+    // 长度与内核 UAPI 里的 domain 字段一致；libstore 会在返回前把它拷走。
+    char domain_buf[FMAC_OFF_NS - FMAC_OFF_DOMAIN] = {};
     const char* domain_chars = env->GetStringUTFChars(domain, nullptr);
     if (domain_chars == nullptr) return -EINVAL;
     std::strncpy(domain_buf, domain_chars, sizeof(domain_buf) - 1);

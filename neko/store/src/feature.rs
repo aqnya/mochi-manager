@@ -1,8 +1,20 @@
-use kzcall::*;
 use proto::{FeatureEntry, FeatureStore};
 use std::io;
 
 use crate::db;
+
+#[cfg(target_os = "android")]
+fn apply(entry: &FeatureEntry) -> io::Result<()> {
+    kzcall::feature_set(entry).map_err(|e| io::Error::other(format!("{e:#}")))
+}
+
+#[cfg(not(target_os = "android"))]
+fn apply(_entry: &FeatureEntry) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "applying a feature requires the NekoSU kernel interface on Android",
+    ))
+}
 
 pub fn save_feature(entry: &FeatureEntry) -> io::Result<()> {
     match db::save_feature(entry)? {
@@ -34,7 +46,7 @@ pub(crate) fn load_entries(entries: &[FeatureEntry]) -> io::Result<()> {
     let mut failed = 0usize;
 
     for entry in entries {
-        if let Err(e) = feature_set(entry) {
+        if let Err(e) = apply(entry) {
             failed += 1;
             log::error!(
                 "feature_set failed: id={} value={}: {e:#}",

@@ -90,11 +90,27 @@ app/src/main/kotlin/com/nekosu/manager/
 neko/ncore/assets,bin/      banner / installer.sh / busybox（由 CMake .incbin 嵌入 ncore）
 uapi/                       内核 UAPI 头（ioctl/selinux/version），kernel 与 ncore 共用一份
 app/src/main/cpp/           本工程自己的 JNI 桥（C++）
-├── ncore/                  C++ 版 ncore（模块/su/resetprop/init 事件/manager 扫描），
-│                           add_executable 直接构建成 libncore.so 落进 jniLibs
-├── neko_jni.cpp            JNI 桥
-└── store/                  profile 落盘存储
+└── neko_jni.cpp            JNI 桥；profile/feature 落盘调 neko/store 编出的 libstore.so
 ```
+
+### libstore 直接编上游 neko/store
+
+profile / feature 的落盘格式以前在本工程里有一份 C++ 复刻（`store/store.cpp`），和
+`neko/store/src/db.rs` 各写一遍；格式一漂移，两边就会写出互相读不懂的文件。上游给 store
+加了 C ABI（`neko/store/include/nksu_store.h`）之后，这里只保留 `libstore.so` 的导入：
+
+- `app/src/main/cpp/CMakeLists.txt` 在 native 构建阶段调
+  `cargo build --release -p store --target aarch64-linux-android`；linker 与 sysroot
+  从 AGP 的 CMake toolchain 取（`CMAKE_C_COMPILER` 同目录下的
+  `aarch64-linux-android<api>-clang`、`CMAKE_SYSROOT`），bindgen 找 `asm/ioctl.h` 用的
+  sysroot 通过 `BINDGEN_EXTRA_CLANG_ARGS_<target>` 传进去；
+- rustc 默认不给 cdylib 写 SONAME，CMake 里补了
+  `-C link-arg=-Wl,-soname,libstore.so`；否则 `libneko.so` 的 `DT_NEEDED` 会记成构建机的
+  绝对路径，装到设备上直接找不到库；
+- AGP 会把 CMake 链接到的 `libstore.so` 与 `libneko.so` 一起收进 APK，不要再手动往
+  `src/main/jniLibs/` 放一份（会触发同名 .so 的合并冲突）。
+
+构建机需要 `rustup target add aarch64-linux-android`（CI 已加这一步）。
 
 ### JNI 由本工程实现
 

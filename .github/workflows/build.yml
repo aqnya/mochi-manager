@@ -45,6 +45,15 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
 
+      # libstore 是上游 neko/store 编出来的 Rust cdylib，CMake 在 native 构建
+      # 阶段调 cargo；这里只补 target，NDK 由下面的 sdkmanager 固定版本。
+      - name: Set up Rust
+        run: rustup target add aarch64-linux-android
+
+      - name: Install NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" > /dev/null
+
       - name: Unit tests
         # setup-java 设置的 JAVA_HOME 只存在于 shell 环境，${{ env.JAVA_HOME }} 取不到，
         # 必须在 shell 里导出，测试 JVM 才会真正用 JDK 21（Robolectric 渲染用例需要）。

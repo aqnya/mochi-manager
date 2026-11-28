@@ -232,6 +232,15 @@ pub(crate) fn del_feature(id: i32) -> io::Result<Option<usize>> {
     Ok(Some(store.features.len()))
 }
 
+pub(crate) fn replace_profiles(profiles: Vec<ProfileEntry>) -> io::Result<()> {
+    ensure_root()?;
+    let _guard = save_lock();
+
+    let mut store = read()?;
+    store.profiles = profiles;
+    write_unlocked(&store)
+}
+
 pub(crate) fn replace_features(features: Vec<FeatureEntry>) -> io::Result<()> {
     ensure_root()?;
     let _guard = save_lock();
