@@ -16,3 +16,6 @@ local.properties
 
 # neko: Rust 交叉编译产物（cargo target）
 /neko/target
+
+# ncore 由 CMake 直接构建；jniLibs 里再放一份会和 AGP 的 obj/<abi> 产物冲突
+/app/src/main/jniLibs/

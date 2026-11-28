@@ -102,8 +102,8 @@ app/src/main/cpp/           本工程自己的 JNI 桥（C++）
 
 - `app/src/main/cpp/neko_jni.cpp` 按 `uapi/ioctl.h` 直接走 `prctl(NKSU_PRCTL_GET_CTL_FD)` + `ioctl(IOC_CMD)`，
   控制 fd 从 `/proc/self/fd` 里按 `[fmac_ctl]` 找（prctl 只负责挂 fd，不改写返回值）；
-- 只导出真正用到的几个：`version / available / hasUid / addUid / delUid / listProfiles / setProfile /
-  featureList / featureGet`，其余（boot 镜像 patch、selinux 批量注入等）不接；
+- 只导出真正用到的几个：`version / available / listProfiles / setProfile / removeProfile /
+  featureList / featureGet / featureSet / readRootFile`，其余（boot 镜像 patch、selinux 批量注入等）不接；
 - Kotlin 侧是 `com.nekosu.manager.neko.NekoNative`，`libneko.so` 加载失败或拿不到 fd 时全部返回 null。
 
 ### ncore 的编译与部署
@@ -115,8 +115,10 @@ ncore 已经用 C++ 完整重写，并直接用 CMake `add_executable` 集成进
 ```
 
 `app/src/main/cpp/ncore/CMakeLists.txt` 把 ncore 构建成**顶着 .so 名字的 PIE 可执行文件**，
-直接输出到 `app/src/main/jniLibs/arm64-v8a/libncore.so`。banner / installer.sh / busybox
-用汇编 `.incbin` 流式嵌入只读段，不生成巨型 C 数组。内核要按
+产物由 AGP 收进 `build/intermediates/cxx/<config>/<hash>/obj/arm64-v8a/libncore.so`，
+再随 APK 打成 `lib/arm64-v8a/libncore.so`（不要再手动往 `src/main/jniLibs/` 写一份，
+否则会触发 `2 files found with path 'lib/arm64-v8a/libncore.so'` 的合并冲突）。
+banner / installer.sh / busybox 用汇编 `.incbin` 流式嵌入只读段，不生成巨型 C 数组。内核要按
 `/data/app/<pkg>/lib/arm64-v8a/libncore.so` 这个路径引导它，所以 APK 里必须解压成真实文件
 （`packaging.jniLibs.useLegacyPackaging = true`）。不再需要 rustup / cargo / 拷贝 / 追加签名等
 任何单独构建步骤。

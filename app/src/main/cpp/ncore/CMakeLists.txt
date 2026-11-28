@@ -2,9 +2,10 @@
 #
 # NekoSU ncore 的 C++ 实现。
 #
-# 以 add_executable 构建，输出顶着 .so 名字的 PIE 可执行文件（libncore.so），
-# 直接落进 jniLibs 由 Gradle 打包——内核在 boot 阶段从 nativeLibraryDir 找
-# libncore.so 引导，因此名字必须与库一致，但它本身不是链接库。
+# 以 add_executable 构建，输出顶着 .so 名字的 PIE 可执行文件（libncore.so）。
+# 构建产物由 AGP 收进 cxx/<config>/<hash>/obj/<abi>/，随 APK 打成 lib/<abi>/libncore.so
+# ——内核在 boot 阶段从 nativeLibraryDir 找 libncore.so 引导，因此名字必须与库一致，
+# 但它本身不是链接库。
 #
 # 取代原先的 build-ncore.sh（rustup + cargo + 拷 so + 追加签名）整条链路。
 
@@ -114,13 +115,16 @@ target_compile_options(ncore PRIVATE
     -fno-rtti
 )
 
-# 顶着 .so 名字的可执行文件，输出到 jniLibs/<abi>/ 供 Gradle 打包。
+# 顶着 .so 名字的可执行文件。
+# 不要自己指定 RUNTIME_OUTPUT_DIRECTORY：AGP 会把 add_executable 的产物收到
+# cxx/<config>/<hash>/obj/<abi>/ 并一起打进 APK 的 lib/<abi>/。
+# 之前手动写到 src/main/jniLibs/<abi>/ 会让同一路径出现两份 libncore.so，
+# release 打包时报 "2 files found with path 'lib/arm64-v8a/libncore.so'"。
 set_target_properties(ncore PROPERTIES
     OUTPUT_NAME "ncore"
     PREFIX "lib"
     SUFFIX ".so"
     POSITION_INDEPENDENT_CODE ON
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../../jniLibs/${ANDROID_ABI}"
 )
 
 # zlib：zip 解压（ inflate ）；zstd/lzma 模块 zip 极少用，store/deflate 覆盖绝大多数。

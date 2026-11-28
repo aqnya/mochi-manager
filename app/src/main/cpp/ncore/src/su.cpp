@@ -97,7 +97,6 @@ void root_shell(int argc, char** argv_raw) {
     gid_t gid = static_cast<gid_t>(-1);
     std::string selinux_context;
     std::vector<std::string> free_args;
-    std::string executable;
 
     for (size_t i = 1; i < argv.size(); ++i) {
         const std::string& a = argv[i];
@@ -161,18 +160,30 @@ void root_shell(int argc, char** argv_raw) {
         gid = !groups.empty() ? groups[0] : static_cast<gid_t>(uid);
     }
 
-    std::vector<std::string> exec_argv;
-    std::string arg0 = is_login ? "-" : shell;
+    // 要 exec 的程序路径与子进程 argv 必须分开维护。
+    // 之前把程序路径同时塞进 argv[0] 和 argv[1]，裸执行 `su` 就变成
+    // `sh /system/bin/sh`——mksh 会把 sh 二进制当脚本读，报
+    // "/system/bin/sh[1]: syntax error: unexpected '('"。
+    std::string program_path;
+    std::vector<std::string> child_args;  // 不含 argv[0]
+
     if (has_command) {
-        exec_argv = {shell, "-c", command};
+        program_path = shell;
+        child_args.push_back("-c");
+        child_args.push_back(command);
     } else if (free_idx + 1 < free_args.size()) {
-        executable = free_args[free_idx + 1];
-        exec_argv.push_back(executable);
-        for (size_t i = free_idx + 2; i < free_args.size(); ++i) exec_argv.push_back(free_args[i]);
-        arg0 = is_login ? "-" : executable;
+        program_path = free_args[free_idx + 1];
+        for (size_t i = free_idx + 2; i < free_args.size(); ++i) child_args.push_back(free_args[i]);
     } else {
-        exec_argv.push_back(shell);
+        program_path = shell;
     }
+
+    // argv[0] 用 basename；login shell 前置 '-'，shell 见到才按登录 shell 处理。
+    std::string base = program_path;
+    size_t last_slash = base.rfind('/');
+    if (last_slash != std::string::npos) base = base.substr(last_slash + 1);
+    if (base.empty()) base = program_path;
+    std::string arg0 = is_login ? "-" + base : base;
 
     if (!preserve_env) {
         struct passwd* pw = getpwuid(uid);
@@ -193,7 +204,7 @@ void root_shell(int argc, char** argv_raw) {
 
     std::vector<char*> cargs;
     cargs.push_back(const_cast<char*>(arg0.c_str()));
-    for (const auto& a : exec_argv) cargs.push_back(const_cast<char*>(a.c_str()));
+    for (const auto& a : child_args) cargs.push_back(const_cast<char*>(a.c_str()));
     cargs.push_back(nullptr);
 
     utils::umask(022);
@@ -209,8 +220,13 @@ void root_shell(int argc, char** argv_raw) {
         }
     }
 
-    execv(exec_argv[0].c_str(), cargs.data());
-    throw sys_error("exec " + exec_argv[0]);
+    // 带 '/' 的按路径 exec；不带 '/' 的（如 `su 0 id`）走 PATH 查找。
+    if (program_path.find('/') == std::string::npos) {
+        execvp(program_path.c_str(), cargs.data());
+    } else {
+        execv(program_path.c_str(), cargs.data());
+    }
+    throw sys_error("exec " + program_path);
 }
 
 }  // namespace ncore::su
