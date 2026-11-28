@@ -427,4 +427,20 @@ int32_t nksu_store_get(int32_t index, nksu_profile* out) {
     return 0;
 }
 
+int32_t nksu_store_set_feature(int32_t id, uint64_t value) {
+    Store store;
+    int rc = load_store(store);
+    if (rc != 0) return rc;
+
+    for (auto& slot : store.features) {
+        if (slot.id != id) continue;
+        // 值没变就不重写文件（对齐上游 save_feature 的 no-change 分支）
+        if (slot.value == value) return 0;
+        slot.value = value;
+        return persist(store);
+    }
+    store.features.push_back(FeatureEntry{id, value});
+    return persist(store);
+}
+
 }  // extern "C"

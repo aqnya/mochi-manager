@@ -248,6 +248,15 @@ bool remove_persisted_profile(uint32_t uid) {
     return wait_child(pid);
 }
 
+/// 把一个 feature 开关 upsert 到落盘存储（fork 子进程临时提权），成功返回 true。
+/// 与上游 store::feature::save_feature 同一份文件、同一语义。
+bool persist_feature(int32_t id, uint64_t value) {
+    const pid_t pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) store_child([&] { return nksu_store_set_feature(id, value); });
+    return wait_child(pid);
+}
+
 }  // namespace
 
 extern "C" {
@@ -362,6 +371,25 @@ Java_com_nekosu_manager_neko_NekoNative_nativeFeatureGet(JNIEnv*, jclass, jint i
     put_u32(data, 0, static_cast<uint32_t>(id));
     if (ioc(IOC_FEATURE_GET, data, sizeof(data)) < 0) return -1;
     return static_cast<jlong>(get_u64(data, FMAC_OFF_FEATURE_VALUE));
+}
+
+/// 写一个特性开关：内核 IOC_FEATURE_SET + 落盘，一次 JNI 调用完成。
+/// 内核写失败只记录（与上游 set_feature 一致，下次 ncore 会按落盘值灌回），
+/// 落盘失败才返回 -1。返回 0 成功。
+JNIEXPORT jint JNICALL
+Java_com_nekosu_manager_neko_NekoNative_nativeFeatureSet(JNIEnv*, jclass, jint id, jlong value) {
+    uint8_t data[FMAC_DATA_FEATURE] = {};
+    put_u32(data, 0, static_cast<uint32_t>(id));
+    put_u64(data, FMAC_OFF_FEATURE_VALUE, static_cast<uint64_t>(value));
+
+    const int ret = ioc(IOC_FEATURE_SET, data, sizeof(data));
+    if (ret < 0) LOGE("set feature failed id=%d ret=%d", id, ret);
+
+    if (!persist_feature(id, static_cast<uint64_t>(value))) {
+        LOGE("persist feature failed id=%d", id);
+        return -1;
+    }
+    return 0;
 }
 
 /// 以 root 读整个文件；失败（提权不了 / 打不开 / 不是普通文件 / 超上限）返回 null。

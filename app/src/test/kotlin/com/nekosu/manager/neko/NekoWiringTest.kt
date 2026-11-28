@@ -2,6 +2,7 @@ package com.nekosu.manager.neko
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.nekosu.manager.data.KernelFeature
 import com.nekosu.manager.data.SuCapabilities
 import com.nekosu.manager.data.SuProfile
 import com.nekosu.manager.data.capsFromMask
@@ -31,6 +32,21 @@ class NekoWiringTest {
         assertNull(NekoNative.hasUid(10000))
         assertNull(NekoNative.listProfiles())
         assertFalse(NekoNative.addUid(10000))
+        assertNull(NekoNative.featureList())
+        assertFalse(NekoNative.featureSet(KernelFeature.SELINUX_HIDE, 1L))
+    }
+
+    @Test
+    fun `内核 feature 在无 native 库时返回空列表与 false`() {
+        assertEquals(emptyList<KernelFeature.Info>(), KernelFeature.list())
+        assertFalse(KernelFeature.set(KernelFeature.UMOUNT, true))
+    }
+
+    @Test
+    fun `内核 feature id 与内核 feature h 一致`() {
+        // kernel/manager/feature.h：SELINUX_HIDE=1、UMOUNT=2，是跨端线上契约
+        assertEquals(1, KernelFeature.SELINUX_HIDE)
+        assertEquals(2, KernelFeature.UMOUNT)
     }
 
     @Test

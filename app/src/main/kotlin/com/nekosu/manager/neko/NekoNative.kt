@@ -55,6 +55,9 @@ object NekoNative {
     private external fun nativeFeatureGet(id: Int): Long
 
     @JvmStatic
+    private external fun nativeFeatureSet(id: Int, value: Long): Int
+
+    @JvmStatic
     private external fun nativeReadRootFile(path: String): ByteArray?
 
     fun version(): String? = call { nativeVersion() }
@@ -87,6 +90,13 @@ object NekoNative {
     fun featureList(): String? = call { nativeFeatureList() }
 
     fun featureGet(id: Int): Long? = call { nativeFeatureGet(id) }?.takeIf { it >= 0 }
+
+    /**
+     * 写一个内核特性开关：内核 ioctl + `/data/adb/nksu/profile` 落盘在同一次 JNI
+     * 调用里完成（对齐上游 `Ncore.featureSet`）。返回 false 表示落盘失败——内核那份
+     * 通常已经生效，但重启后 ncore 恢复不出来。
+     */
+    fun featureSet(id: Int, value: Long): Boolean = call { nativeFeatureSet(id, value) } == 0
 
     /**
      * 以 root 读整个文件内容；失败返回 null。

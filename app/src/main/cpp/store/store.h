@@ -70,6 +70,11 @@ int32_t nksu_store_count(void);
 /* 按下标取一条 profile；越界返回 1，成功返回 0。 */
 int32_t nksu_store_get(int32_t index, nksu_profile* out);
 
+/* 读改写：把一条 feature 开关（id + value）upsert 到存储并原子写回。
+ * 与上游 store::feature::save_feature 同一语义：值没变则不重写文件。
+ * 返回 0 成功，负值为错误码；调用方需具备对存储路径的访问权限。 */
+int32_t nksu_store_set_feature(int32_t id, uint64_t value);
+
 #ifdef __cplusplus
 }
 #endif

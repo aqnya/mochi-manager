@@ -48,8 +48,6 @@ fun SettingsScreen(
     var checkUpdate by rememberSaveable { mutableStateOf(true) }
     var checkModuleUpdate by rememberSaveable { mutableStateOf(true) }
     var uiMode by rememberSaveable { mutableIntStateOf(0) }
-    var kernelUmount by rememberSaveable { mutableStateOf(true) }
-    var selinuxHide by rememberSaveable { mutableStateOf(true) }
     var sulog by rememberSaveable { mutableStateOf(true) }
     var adbRoot by rememberSaveable { mutableStateOf(false) }
     var softReboot by rememberSaveable { mutableStateOf(false) }
@@ -115,22 +113,9 @@ fun SettingsScreen(
                     onSelect = {},
                     leading = { KsuTile("shield", KsuTileColors.Green) },
                 )
-                KsuSwitchRow(
-                    stringResource(R.string.settings_kernel_umount),
-                    kernelUmount,
-                    { kernelUmount = it },
-                    icon = "layers",
-                    color = KsuTileColors.Green,
-                    subtitle = stringResource(R.string.settings_kernel_umount_summary),
-                )
-                KsuSwitchRow(
-                    stringResource(R.string.settings_selinux_hide),
-                    selinuxHide,
-                    { selinuxHide = it },
-                    icon = "eye-off",
-                    color = KsuTileColors.Green,
-                    subtitle = stringResource(R.string.settings_selinux_hide_summary),
-                )
+                // 内核 feature 开关（SELinux 隐藏 / 模块挂载隐藏）由内核上报的状态驱动，
+                // 切换时 JNI 同步内核 + 落盘；内核不在线时回退到本地占位开关。
+                KernelFeatureSection()
                 KsuSwitchRow(
                     stringResource(R.string.settings_sulog),
                     sulog,
