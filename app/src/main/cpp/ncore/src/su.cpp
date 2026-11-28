@@ -172,6 +172,20 @@ void root_shell(int argc, char** argv_raw) {
         }
     }
 
+    // 兼容 termux sudo（agnostic-apollo/sudo）这类包装器：它把整条 shell 命令拼进
+    // 一个变量再**不加引号**展开，于是 `-c` 只吃到第一个词（如 `export`），后面
+    // `PATH='...';`、`LD_LIBRARY_PATH='';` … 全被 bash 按空格切成位置参数。
+    // 这些位置参数原本就和 `-c` 的值是同一条命令（原串正是被空格切开的），
+    // 用空格接回去即可无损还原；带 `-c` 时位置参数不再当作「用户名」解析，
+    // 否则会报 "Unknown user: PATH='...'"。
+    if (has_command && !free_args.empty()) {
+        for (const auto& a : free_args) {
+            command.push_back(' ');
+            command += a;
+        }
+        free_args.clear();
+    }
+
     size_t free_idx = 0;
     if (!free_args.empty() && free_args[free_idx] == "-") {
         is_login = true;
