@@ -142,7 +142,27 @@ fun WebUIScreen(webUIState: WebUIState) {
                         override fun shouldInterceptRequest(
                             view: WebView,
                             request: WebResourceRequest,
-                        ): WebResourceResponse? = assetLoader.shouldInterceptRequest(request.url)
+                        ): WebResourceResponse? {
+                            // 预检：WebView 偶尔会对带 crossorigin 的资源发 OPTIONS，
+                            // 不直接应答就会落到不存在的 DNS 域上失败
+                            if (request.method.equals("OPTIONS", ignoreCase = true)) {
+                                return WebResourceResponse(
+                                    "text/plain",
+                                    "utf-8",
+                                    204,
+                                    "No Content",
+                                    WEBUI_RESPONSE_HEADERS,
+                                    java.io.ByteArrayInputStream(ByteArray(0)),
+                                )
+                            }
+                            val response = assetLoader.shouldInterceptRequest(request.url) ?: return null
+                            // 兜底补 CORS 头：WebView 不把拦截响应当作同源可信响应，
+                            // 带 crossorigin 的 CSS / ES module 缺头就会整页加载失败
+                            val merged = HashMap(response.responseHeaders ?: emptyMap())
+                            merged.putAll(WEBUI_RESPONSE_HEADERS)
+                            response.responseHeaders = merged
+                            return response
+                        }
 
                         override fun doUpdateVisitedHistory(
                             view: WebView?,

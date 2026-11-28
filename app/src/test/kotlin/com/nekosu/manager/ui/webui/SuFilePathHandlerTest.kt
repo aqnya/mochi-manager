@@ -52,4 +52,19 @@ class SuFilePathHandlerTest {
     fun `webroot 带尾斜杠也正常`() {
         assertEquals("$root/index.html", resolveWithinWebRoot("$root/", "index.html"))
     }
+
+    /**
+     * 关键回归：WebView 不把 `shouldInterceptRequest` 返回的响应当作同源可信响应，
+     * 带 crossorigin 的 CSS（Vite 预加载）缺 CORS 头就会报
+     * `Unable to preload CSS`，模块页直接白屏。
+     */
+    @Test
+    fun `拦截响应必须带 CORS 头`() {
+        assertEquals("*", WEBUI_RESPONSE_HEADERS["Access-Control-Allow-Origin"])
+
+        val handler = SuFilePathHandler(java.io.File(root)) { WebInsets(0, 0, 0, 0) }
+        val css = handler.handle("internal/colors.css")
+        assertEquals("text/css", css.mimeType)
+        assertEquals("*", css.responseHeaders?.get("Access-Control-Allow-Origin"))
+    }
 }
