@@ -19,6 +19,15 @@ import org.json.JSONObject
 private const val TAG = "NekoSU/SuProfile"
 
 /**
+ * SELinux 域：`user:role:type[:range]`。range 本身可以带冒号与点，
+ * 例如 `s0:c512,c768` / `s0:c0.c1023`，这段要一起放行。
+ */
+private val SELINUX_CONTEXT_REGEX =
+    Regex("^[a-z_][a-z0-9_]*:[a-z_][a-z0-9_]*:[a-z_][a-z0-9_]*(:[a-zA-Z0-9_:,.\\-]+)?$")
+
+internal fun isValidSelinuxContext(value: String): Boolean = SELINUX_CONTEXT_REGEX.matches(value)
+
+/**
  * 一个 uid（而不是一个包）的超级用户配置，字段对齐 KernelSU 的 AppProfile：
  * 是否放行、以什么身份运行（uid/gid/附加组）、能力位、命名空间、SELinux 域、是否卸载模块。
  *
@@ -356,7 +365,12 @@ object SuProfileStore {
                                     },
                                 namespace = o.optInt("namespace", SuProfile.NAMESPACE_INHERIT),
                                 umountModules = o.optBoolean("umount", false),
-                                context = o.optString("context", SuProfile.DEFAULT_CONTEXT),
+                                // 旧版本可能把 root_uid（0）误存成 domain，这种脏值会让
+                                // 内核拒绝 setcon，直接回退默认值，避免坏配置继续扩散。
+                                context =
+                                    o.optString("context", SuProfile.DEFAULT_CONTEXT).let { saved ->
+                                        saved.takeIf { isValidSelinuxContext(it) } ?: SuProfile.DEFAULT_CONTEXT
+                                    },
                             ),
                         )
                     }
@@ -443,7 +457,10 @@ internal fun applyKernel(
     if (profile.allowSu) {
         if (!kernel.setAllowed(uid, true)) Log.w(TAG, "set allowed failed uid=$uid allow=true")
         val caps = capsMask(profile.capabilities)
-        if (!kernel.setProfile(uid, caps, profile.context, profile.namespace, profile.runAsUid)) {
+        // 最后一道防线：任何路径漏进来的非法域（例如旧版误存的 "0"）都不能写进内核，
+        // 否则 setcon 失败会让整个授权流程异常。
+        val domain = profile.context.takeIf { isValidSelinuxContext(it) } ?: SuProfile.DEFAULT_CONTEXT
+        if (!kernel.setProfile(uid, caps, domain, profile.namespace, profile.runAsUid)) {
             Log.w(TAG, "persist profile failed uid=$uid")
         }
         return

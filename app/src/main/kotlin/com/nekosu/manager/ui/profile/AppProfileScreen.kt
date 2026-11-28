@@ -27,6 +27,7 @@ import com.nekosu.manager.data.SuCapabilities
 import com.nekosu.manager.data.SuCapabilityCategories
 import com.nekosu.manager.data.SuGroups
 import com.nekosu.manager.data.SuProfile
+import com.nekosu.manager.data.isValidSelinuxContext
 import com.nekosu.manager.data.SuProfileStore
 import com.nekosu.manager.ui.mochi.AppIcon
 import com.nekosu.manager.ui.mochi.KsuTile
@@ -284,7 +285,7 @@ private fun TextRow(
 ) {
     var editing by remember { mutableStateOf(false) }
     var draft by remember(value) { mutableStateOf(value) }
-    val valid = remember(draft) { draft.matches(Regex("^[a-z_]+:[a-z0-9_]+:[a-z0-9_]+(:[a-z0-9_,]+)?$")) }
+    val valid = remember(draft) { isValidSelinuxContext(draft) }
     MochiListRow(title, value = value, chevron = true, onClick = { editing = true })
     MochiDialog(
         visible = editing,

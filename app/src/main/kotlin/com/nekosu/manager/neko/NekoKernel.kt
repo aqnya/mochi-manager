@@ -1,6 +1,7 @@
 package com.nekosu.manager.neko
 
 import android.util.Log
+import com.nekosu.manager.data.SuProfile
 
 /**
  * 内核侧的能力查询与授权操作。
@@ -16,6 +17,7 @@ object NekoKernel {
         val uid: Int,
         val caps: Long,
         val namespace: Int,
+        val rootUid: Int,
         val domain: String,
     )
 
@@ -26,22 +28,12 @@ object NekoKernel {
         get() = version() != null
 
     /**
-     * 读 profile 表。内核按行输出 `<uid> <caps_hex> <ns> <domain>`，
-     * 解析失败的行走日志后跳过，不让一整张表因为一行脏数据全丢。
+     * 读 profile 表。实际格式见 [parseAllowProfile]，解析失败的行跳过，
+     * 不让一整张表因为一行脏数据全丢。
      */
     fun profiles(): List<Profile>? {
         val text = NekoNative.listProfiles() ?: return null
-        return text.lineSequence()
-            .mapNotNull { line ->
-                val parts = line.trim().split(' ')
-                if (parts.size < 4) return@mapNotNull null
-                val uid = parts[0].toIntOrNull() ?: return@mapNotNull null
-                val caps = parts[1].toULongOrNull(16)?.toLong() ?: return@mapNotNull null
-                val ns = parts[2].toIntOrNull() ?: return@mapNotNull null
-                Profile(uid, caps, ns, parts[3])
-            }
-            .toList()
-            .also { Log.d(TAG, "profiles count=${it.size}") }
+        return parseAllowProfile(text).also { Log.d(TAG, "profiles count=${it.size}") }
     }
 
     fun isAllowed(uid: Int): Boolean? = NekoNative.hasUid(uid)
@@ -85,3 +77,42 @@ object NekoKernel {
             .toMap()
     }
 }
+
+/** profile 文本里的分隔符：内核输出用空格，历史版本可能混用 tab。 */
+private val PROFILE_WHITESPACE = Regex("\\s+")
+
+/**
+ * 解析内核 `IOC_GET_PROFILES` 返回的文本。
+ *
+ * 内核 `nksu_profile_to_text` 先输出两行 `#` 头，之后每行是：
+ * ```
+ * <uid> <caps_hex> <ns> <root_uid> <selinux_domain>
+ * ```
+ * 旧版内核没有 `root_uid` 一列，只有 4 段（甚至 3 段、省略 domain），所以按段数兼容。
+ * SELinux 域没设置时内核写 `-`，这里回退到默认域。
+ *
+ * 这里曾把第 4 段（`root_uid`）当成了 SELinux 域：root_uid 默认就是 0，
+ * 于是授权页里上下文会偶发变成 "0"，下次保存又把这个 "0" 写回内核，
+ * 直接导致授权异常。位置必须按内核格式对齐。
+ */
+internal fun parseAllowProfile(text: String): List<NekoKernel.Profile> =
+    text.lineSequence()
+        .mapNotNull { raw ->
+            val line = raw.trim()
+            if (line.isEmpty() || line.startsWith("#")) return@mapNotNull null
+            val parts = line.split(PROFILE_WHITESPACE)
+            if (parts.size < 3) return@mapNotNull null
+            val uid = parts[0].toIntOrNull() ?: return@mapNotNull null
+            val caps = parts[1].toULongOrNull(16)?.toLong() ?: return@mapNotNull null
+            val ns = parts[2].toIntOrNull() ?: return@mapNotNull null
+            val rootUid = if (parts.size >= 5) parts[3].toIntOrNull() ?: 0 else 0
+            val domainRaw =
+                when {
+                    parts.size >= 5 -> parts[4]
+                    parts.size == 4 -> parts[3]
+                    else -> null
+                }
+            val domain = domainRaw?.takeIf { it.isNotEmpty() && it != "-" } ?: SuProfile.DEFAULT_CONTEXT
+            NekoKernel.Profile(uid, caps, ns, rootUid, domain)
+        }
+        .toList()

@@ -2,6 +2,7 @@ package com.nekosu.manager.data
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -81,5 +82,14 @@ class SuProfileKernelTest {
         val kernel = FakeKernel()
         applyKernel(SuProfile("com.demo", 10_123, allowSu = false), kernel)
         assertTrue(kernel.calls.none { it.startsWith("profile:") })
+    }
+
+    @Test
+    fun `损坏的SELinux域在写入内核前回退默认值`() {
+        val kernel = FakeKernel()
+        val profile = SuProfile("com.demo", 10_123, allowSu = true, context = "0")
+        applyKernel(profile, kernel)
+        assertTrue(kernel.calls[1].endsWith(":${SuProfile.DEFAULT_CONTEXT}"))
+        assertFalse(kernel.calls[1].endsWith(":0"))
     }
 }
