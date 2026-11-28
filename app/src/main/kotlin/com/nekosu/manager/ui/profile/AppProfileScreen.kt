@@ -375,7 +375,7 @@ private fun <T> MultiSelectRow(
  *
  * 相比通用 [MultiSelectRow] 的增强：平铺 41 项难以定位，这里加了搜索框
  * （按名字或描述过滤，名字带不带 CAP_ 前缀都能搜到）、按类别的段头、
- * 「全选/清空」快捷键与已选计数。
+ * 「默认/全选/清空」快捷键与已选计数。
  */
 @Composable
 private fun CapabilitySelectRow(
@@ -422,6 +422,9 @@ private fun CapabilitySelectRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            MochiButton(style = MochiButtonStyle.Tonal, onClick = { draft = SuProfile.DEFAULT_CAPABILITIES }) {
+                Text(stringResource(R.string.capabilities_default), style = MochiTheme.textStyles.footnote)
+            }
             MochiButton(style = MochiButtonStyle.Tonal, onClick = { draft = SuCapabilities.map { it.name }.toSet() }) {
                 Text(stringResource(R.string.select_all), style = MochiTheme.textStyles.footnote)
             }

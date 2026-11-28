@@ -3,6 +3,7 @@ package com.nekosu.manager.neko
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nekosu.manager.data.SuCapabilities
+import com.nekosu.manager.data.SuProfile
 import com.nekosu.manager.data.capsFromMask
 import com.nekosu.manager.data.capsMask
 import org.junit.Assert.assertEquals
@@ -79,5 +80,27 @@ class NekoWiringTest {
         expected.forEach { (name, bit) -> assertEquals(bit, actual[name]) }
         // 每一项都有分类与中文描述，弹窗分组展示才有内容
         assertTrue(SuCapabilities.all { it.category.isNotBlank() && it.desc.isNotBlank() })
+    }
+
+    @Test
+    fun `默认能力位都是已知项，且不会顺手放开高危位`() {
+        val known = SuCapabilities.map { it.name }.toSet()
+        assertTrue(SuProfile.DEFAULT_CAPABILITIES.all { it in known })
+        // 新授权的默认值要能把 root shell 正常跑起来
+        assertTrue("CAP_SYS_ADMIN" in SuProfile.DEFAULT_CAPABILITIES)
+        assertTrue("CAP_DAC_OVERRIDE" in SuProfile.DEFAULT_CAPABILITIES)
+        // 内核模块加载、裸设备、改时钟、改 SELinux 策略这类必须用户自己勾
+        listOf("CAP_SYS_MODULE", "CAP_SYS_RAWIO", "CAP_SYS_TIME", "CAP_MAC_ADMIN").forEach {
+            assertFalse(it in SuProfile.DEFAULT_CAPABILITIES)
+        }
+        // 默认 profile 与 reset() 都带默认能力位，但不算「自定义」
+        val profile = SuProfile.default("com.demo", 10_123)
+        assertEquals(SuProfile.DEFAULT_CAPABILITIES, profile.capabilities)
+        assertFalse(profile.isCustom)
+        assertFalse(profile.reset().isCustom)
+        // capsMask 能把这 8 项拼成内核位，再解回来还是同一组
+        val expectedBits = setOf(0, 1, 2, 3, 7, 6, 21, 19).fold(0L) { mask, bit -> mask or (1L shl bit) }
+        assertEquals(expectedBits, capsMask(SuProfile.DEFAULT_CAPABILITIES))
+        assertEquals(SuProfile.DEFAULT_CAPABILITIES, capsFromMask(expectedBits))
     }
 }

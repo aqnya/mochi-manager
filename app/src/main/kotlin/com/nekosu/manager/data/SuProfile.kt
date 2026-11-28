@@ -30,7 +30,7 @@ data class SuProfile(
     val runAsUid: Int = 0,
     val runAsGid: Int = 0,
     val groups: Set<Int> = setOf(GROUP_ROOT),
-    val capabilities: Set<String> = emptySet(),
+    val capabilities: Set<String> = DEFAULT_CAPABILITIES,
     val namespace: Int = NAMESPACE_INHERIT,
     val umountModules: Boolean = false,
     val context: String = DEFAULT_CONTEXT,
@@ -38,7 +38,8 @@ data class SuProfile(
     /** 与默认值不同就算「自定义配置」，用于列表的 CUSTOM 标签与分组。 */
     val isCustom: Boolean
         get() =
-            runAsUid != 0 || runAsGid != 0 || groups != setOf(GROUP_ROOT) || capabilities.isNotEmpty() ||
+            runAsUid != 0 || runAsGid != 0 || groups != setOf(GROUP_ROOT) ||
+                capabilities != DEFAULT_CAPABILITIES ||
                 namespace != NAMESPACE_INHERIT || umountModules || context != DEFAULT_CONTEXT
 
     fun reset(): SuProfile = SuProfile(packageName, appUid)
@@ -49,6 +50,26 @@ data class SuProfile(
         const val NAMESPACE_GLOBAL = 1
         const val NAMESPACE_INDIVIDUAL = 2
         const val DEFAULT_CONTEXT = "u:r:nksu:s0"
+
+        /**
+         * 新授权的默认能力位，与上游 NekoSU 的 `DEFAULT_CAPS` 一致。
+         *
+         * 空集不是「安全」而是「不能用」：以 uid 0 身份运行但 permitted/effective 全空，
+         * 连 mount、ptrace、改文件属主这类基本操作都会被拒。这 8 项覆盖
+         * 「正常当一个 root shell 用」所需要的范围，其余高危项（SYS_MODULE、
+         * SYS_RAWIO、SYS_TIME、MAC_ADMIN 等）仍要用户手动勾选。
+         */
+        val DEFAULT_CAPABILITIES: Set<String> =
+            linkedSetOf(
+                "CAP_CHOWN",
+                "CAP_DAC_OVERRIDE",
+                "CAP_DAC_READ_SEARCH",
+                "CAP_FOWNER",
+                "CAP_SETUID",
+                "CAP_SETGID",
+                "CAP_SYS_ADMIN",
+                "CAP_SYS_PTRACE",
+            )
 
         fun default(
             packageName: String,
@@ -347,7 +368,13 @@ object SuProfileStore {
                                 runAsUid = runAsUid,
                                 runAsGid = runAsGid,
                                 groups = o.optJSONArray("groups").toIntSet(setOf(SuProfile.GROUP_ROOT)),
-                                capabilities = o.optJSONArray("caps").toStringSet(),
+                                // 字段缺失（更早的版本没写 caps）时补默认值；空数组是用户主动清空，保持原样
+                                capabilities =
+                                    if (o.has("caps")) {
+                                        o.optJSONArray("caps").toStringSet()
+                                    } else {
+                                        SuProfile.DEFAULT_CAPABILITIES
+                                    },
                                 namespace = o.optInt("namespace", SuProfile.NAMESPACE_INHERIT),
                                 umountModules = o.optBoolean("umount", false),
                                 context = o.optString("context", SuProfile.DEFAULT_CONTEXT),
