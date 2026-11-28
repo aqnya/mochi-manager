@@ -1341,23 +1341,28 @@ bool RemoveProperty(const std::string &name, bool prune, std::string *error)
 
 // The SELinux context of a property is simply the name of the area file that
 // holds it; bionic maps /dev/__properties__/<context>.
+//
+// 属性还不存在时（resetprop -Z 最常见的用法就是"我要写这个属性，该给哪个
+// context 加 sepolicy"）退回 property_info 的前缀匹配，同样能给出答案。
 bool GetPropertyContext(const std::string &name, std::string *context)
 {
 	const prop_info *info = __system_property_find(name.c_str());
-	if (info == nullptr) {
-		return false;
+	if (info != nullptr) {
+		std::vector<Mapping> maps;
+		if (ParseSelfMaps(maps)) {
+			const Mapping *mapping = FindMapping(maps, info);
+			if (mapping != nullptr && IsPropertyAreaFile(mapping->path)) {
+				*context = AreaBaseName(mapping->path);
+				return true;
+			}
+		}
 	}
 
-	std::vector<Mapping> maps;
-	if (!ParseSelfMaps(maps)) {
+	std::string path;
+	if (!ResolveContextPath(name, &path)) {
 		return false;
 	}
-	const Mapping *mapping = FindMapping(maps, info);
-	if (mapping == nullptr || !IsPropertyAreaFile(mapping->path)) {
-		return false;
-	}
-
-	*context = AreaBaseName(mapping->path);
+	*context = AreaBaseName(path);
 	return true;
 }
 
