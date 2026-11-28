@@ -4,6 +4,7 @@
 #include "su.h"
 
 #include <fcntl.h>
+#include <getopt.h>
 #include <grp.h>
 #include <pwd.h>
 #include <sys/prctl.h>
@@ -67,7 +68,8 @@ gid_t parse_gid(const std::string& g) {
     return static_cast<gid_t>(v);
 }
 
-bool is_option(const std::string& s) { return s.size() > 1 && s[0] == '-'; }
+// --no-new-privs 没有短选项，用一个超出 char 范围的值做 key。
+enum { kOptNoNewPrivs = 1000 };
 
 void add_path_to_env(const std::string& path) {
     std::string cur = getenv("PATH") != nullptr ? getenv("PATH") : "";
@@ -87,12 +89,29 @@ void set_identity(uid_t uid, gid_t gid, const std::vector<gid_t>& groups) {
 }  // namespace
 
 void root_shell(int argc, char** argv_raw) {
-    std::vector<std::string> argv;
-    for (int i = 0; i < argc; ++i) argv.emplace_back(argv_raw[i] != nullptr ? argv_raw[i] : "");
-    if (argv.empty()) argv.push_back("su");
-    std::string program = argv[0];
+    // 复制一份可变 argv：既给 getopt_long 用，也能把历史别名就地规整——
+    // `-mm`（老式 mount-master）若原样交给 getopt 会被拆成两个 `-m`，
+    // `-cn` 会被当成 `-c n`（去执行一条叫 n 的命令），都必须在解析前改写。
+    std::vector<std::string> args;
+    args.reserve(static_cast<size_t>(argc > 0 ? argc : 1));
+    args.emplace_back(argc > 0 && argv_raw[0] != nullptr ? argv_raw[0] : "su");
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv_raw[i] != nullptr ? argv_raw[i] : "";
+        if (a == "-mm") {
+            a = "-M";
+        } else if (a == "-cn") {
+            a = "-z";
+        }
+        args.push_back(std::move(a));
+    }
+    const std::string program = args[0];
 
-    // 解析选项。
+    std::vector<char*> argv;
+    argv.reserve(args.size() + 1);
+    for (auto& s : args) argv.push_back(s.data());
+    argv.push_back(nullptr);
+    const int argc_i = static_cast<int>(args.size());
+
     std::string shell = "/system/bin/sh";
     std::string command;
     bool has_command = false;
@@ -103,74 +122,90 @@ void root_shell(int argc, char** argv_raw) {
     std::vector<gid_t> groups;
     gid_t gid = static_cast<gid_t>(-1);
     std::string selinux_context;
-    std::vector<std::string> free_args;
 
-    // 需要带值选项的统一取值：缺参数直接报错，不再"静默降级成交互 shell"。
-    auto take_value = [&](size_t& i, const char* opt) -> std::string {
-        if (i + 1 >= argv.size()) {
-            fprintf(stderr, "su: option requires an argument -- '%s'\n", opt);
-            print_usage(program);
-            exit(1);
-        }
-        return argv[++i];
+    // 长选项统一复用短选项字符处理，避免两套分支逻辑走偏。
+    static const struct option kLongOptions[] = {
+        {"command", required_argument, nullptr, 'c'},
+        {"help", no_argument, nullptr, 'h'},
+        {"login", no_argument, nullptr, 'l'},
+        {"preserve-environment", no_argument, nullptr, 'p'},
+        {"shell", required_argument, nullptr, 's'},
+        {"mount-master", no_argument, nullptr, 'M'},
+        {"group", required_argument, nullptr, 'g'},
+        {"supp-group", required_argument, nullptr, 'G'},
+        {"context", required_argument, nullptr, 'Z'},
+        {"no-new-privs", no_argument, nullptr, kOptNoNewPrivs},
+        {"version", no_argument, nullptr, 'v'},
+        {nullptr, 0, nullptr, 0},
     };
 
-    for (size_t i = 1; i < argv.size(); ++i) {
-        const std::string& a = argv[i];
-        if (a == "--") {
-            // 「选项结束」：后面的全部按位置参数处理。
-            for (++i; i < argv.size(); ++i) free_args.push_back(argv[i]);
-            break;
-        }
-        if (a == "-c" || a == "--command") {
-            command = take_value(i, "c");
-            has_command = true;
-        } else if (a.rfind("--command=", 0) == 0) {
-            command = a.substr(strlen("--command="));
-            has_command = true;
-        } else if (a == "-h" || a == "--help") {
-            print_usage(program);
-            return;
-        } else if (a == "-v" || a == "--version") {
-            printf("%s:NekoSU\n", defs::VERSION_NAME);
-            return;
-        } else if (a == "-V") {
-            printf("%s\n", defs::VERSION_CODE);
-            return;
-        } else if (a == "-l" || a == "--login") {
-            is_login = true;
-        } else if (a == "-p" || a == "-m" || a == "--preserve-environment") {
-            preserve_env = true;
-        } else if (a == "-M" || a == "-mm" || a == "--mount-master") {
-            mount_master = true;
-        } else if (a == "--no-new-privs") {
-            no_new_privs = true;
-        } else if (a == "-s" || a == "--shell") {
-            shell = take_value(i, "s");
-        } else if (a.rfind("--shell=", 0) == 0) {
-            shell = a.substr(strlen("--shell="));
-        } else if (a == "-g" || a == "--group") {
-            gid = parse_gid(take_value(i, "g"));
-        } else if (a.rfind("--group=", 0) == 0) {
-            gid = parse_gid(a.substr(strlen("--group=")));
-        } else if (a == "-G" || a == "--supp-group") {
-            groups.push_back(parse_gid(take_value(i, "G")));
-        } else if (a.rfind("--supp-group=", 0) == 0) {
-            groups.push_back(parse_gid(a.substr(strlen("--supp-group="))));
-        } else if (a == "-Z" || a == "--context") {
-            selinux_context = take_value(i, "Z");
-        } else if (a.rfind("--context=", 0) == 0) {
-            selinux_context = a.substr(strlen("--context="));
-        } else if (a == "-z" || a == "-cn") {
-            // -z / -cn 依赖后续的 -Z 取值，这里不额外处理。
-        } else if (is_option(a)) {
-            fprintf(stderr, "su: invalid option -- '%s'\n", a.c_str());
-            print_usage(program);
-            exit(1);
-        } else {
-            free_args.push_back(a);
+    // optstring 前缀两个修饰符：
+    //   ':' 让缺参数返回 ':'（与「未知选项」的 '?' 区分开），能精确报错；
+    //   '+' 走 POSIX 模式——遇到第一个非选项就停下，否则 GNU getopt 会把
+    //       `su 0 id` 里的 `0`、`id` 重排到所有选项之后，位置参数就错位了。
+    optind = 0;  // 复位 getopt 全局状态（同一进程内可能多次进入本函数）
+    opterr = 0;  // 错误信息自己打印，格式与其它 su 实现保持一致
+    int opt;
+    while ((opt = getopt_long(argc_i, argv.data(), "+:c:hlmps:vVMg:G:Z:z", kLongOptions, nullptr)) !=
+           -1) {
+        switch (opt) {
+            case 'c':
+                command = optarg;
+                has_command = true;
+                break;
+            case 'h':
+                print_usage(program);
+                return;
+            case 'v':
+                printf("%s:NekoSU\n", defs::VERSION_NAME);
+                return;
+            case 'V':
+                printf("%s\n", defs::VERSION_CODE);
+                return;
+            case 'l':
+                is_login = true;
+                break;
+            case 'm':
+            case 'p':
+                preserve_env = true;
+                break;
+            case 'M':
+                mount_master = true;
+                break;
+            case 's':
+                shell = optarg;
+                break;
+            case 'g':
+                gid = parse_gid(optarg);
+                break;
+            case 'G':
+                groups.push_back(parse_gid(optarg));
+                break;
+            case 'Z':
+                selinux_context = optarg;
+                break;
+            case 'z':
+                // -z / -cn：历史别名，无实际操作。
+                break;
+            case kOptNoNewPrivs:
+                no_new_privs = true;
+                break;
+            case ':':
+                fprintf(stderr, "su: option requires an argument -- '%s'\n",
+                        optind > 0 ? argv[optind - 1] : "");
+                print_usage(program);
+                exit(1);
+            case '?':
+            default:
+                fprintf(stderr, "su: invalid option -- '%s'\n", optind > 0 ? argv[optind - 1] : "");
+                print_usage(program);
+                exit(1);
         }
     }
+
+    // getopt 停下后，optind 之后全是位置参数（单独一个 "-" 表示登录 shell）。
+    std::vector<std::string> free_args;
+    for (int i = optind; i < argc_i; ++i) free_args.emplace_back(argv[i]);
 
     // 兼容 termux sudo（agnostic-apollo/sudo）这类包装器：它把整条 shell 命令拼进
     // 一个变量再**不加引号**展开，于是 `-c` 只吃到第一个词（如 `export`），后面
