@@ -1,29 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Magisk 兼容的 resetprop 工具。
+// Magisk 兼容的 resetprop CLI。
 //
-// 上游 Rust 版用 prop-rs-android 直接 mmap property area，以绕过 property_service
-// 设置 ro.* 只读属性。这里用 bionic 公开的 __system_property_* API 实现主路径：
-// 读取（get/list）、设置（set）、从文件加载、等待。删除用置空值近似（bionic 未提供
-// 公开删除接口），持久化/mmap 重建等高级行为降级为尽力而为。对绝大多数模块的
-// system.prop 场景（设置普通属性）已足够。
+// 读写底层全部落在 prop_area.cpp（沿用上游 manager 侧 prop 工具的 property
+// area 实现）：ro.* 能改，长值能写，非 ro.* 默认仍走 property_service 以保留
+// init 的 SELinux 检查与 trigger，`-n` 则一律直写。
+//
+// 尚未实现的开关（解析后忽略，不影响其它参数）：-p/--persistent、
+// -P（持久化文件读写）、-c/-Z/--force（property area 重建/紧凑）。
 #include "resetprop.h"
 
-#include <sys/system_properties.h>
 #include <time.h>
 #include <unistd.h>
 
-#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <vector>
 
 #include "common.h"
 #include "defs.h"
 #include "klog.h"
+#include "prop_area.h"
 #include "properties.h"
 
 namespace ncore::resetprop {
@@ -105,47 +103,27 @@ Options parse_args(const std::vector<std::string>& args, bool& help, bool& versi
     return o;
 }
 
-std::string prop_get(const std::string& name) {
-    char value[PROP_VALUE_MAX] = {};
-    int len = __system_property_get(name.c_str(), value);
-    if (len <= 0) return {};
-    return std::string(value, static_cast<size_t>(len));
+bool set_prop(const std::string& name, const std::string& value, bool force_direct) {
+    std::string err;
+    if (!prop::write(name, value, force_direct, &err)) {
+        fprintf(stderr, "resetprop: %s\n", err.c_str());
+        return false;
+    }
+    return true;
 }
 
-bool prop_set(const std::string& name, const std::string& value) {
-    return __system_property_set(name.c_str(), value.c_str()) == 0;
-}
-
-void collect_props(std::vector<std::pair<std::string, std::string>>& out) {
-    struct Ctx {
-        std::vector<std::pair<std::string, std::string>>* out;
-    } ctx{&out};
-    __system_property_foreach(
-        [](const prop_info* pi, void* cookie) {
-            auto* c = static_cast<Ctx*>(cookie);
-            char name[PROP_VALUE_MAX] = {};
-            char value[PROP_VALUE_MAX] = {};
-            __system_property_read(pi, name, value);
-            c->out->emplace_back(name, value);
-        },
-        &ctx);
-    std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-}
-
-bool load_props_from_file(const std::string& path, bool verbose) {
+bool load_props_from_file(const std::string& path, bool force_direct) {
     std::string content;
     if (!read_file_to_string(path, content)) {
         fprintf(stderr, "resetprop: failed to open %s\n", path.c_str());
         return false;
     }
-    auto props = parse_properties(content);
-    for (const auto& kv : props) {
+    bool ok = true;
+    for (const auto& kv : parse_properties(content)) {
         if (kv.first.empty()) continue;
-        if (!prop_set(kv.first, kv.second)) {
-            if (verbose) fprintf(stderr, "resetprop: warning: failed to set %s\n", kv.first.c_str());
-        }
+        if (!set_prop(kv.first, kv.second, force_direct)) ok = false;
     }
-    return true;
+    return ok;
 }
 
 int run(const std::vector<std::string>& args) {
@@ -166,7 +144,7 @@ int run(const std::vector<std::string>& args) {
     }
 
     if (!o.file.empty()) {
-        return load_props_from_file(o.file, o.verbose) ? 0 : 1;
+        return load_props_from_file(o.file, o.skip_svc) ? 0 : 1;
     }
 
     if (o.delete_prop) {
@@ -175,15 +153,13 @@ int run(const std::vector<std::string>& args) {
             return 1;
         }
         const std::string& name = o.positional[0];
-        if (prop_get(name).empty()) {
+        std::string current;
+        if (!prop::read(name, &current)) {
             fprintf(stderr, "resetprop: %s not found\n", name.c_str());
             return 1;
         }
-        // bionic 无公开删除接口，置空近似 Magisk 的删除语义。
-        if (!prop_set(name, "")) {
-            fprintf(stderr, "resetprop: failed to delete %s\n", name.c_str());
-            return 1;
-        }
+        // 没有公开的删除接口：置空是与 Magisk 行为最接近的近似。
+        if (!set_prop(name, "", o.skip_svc)) return 1;
         return 0;
     }
 
@@ -193,18 +169,19 @@ int run(const std::vector<std::string>& args) {
             return 1;
         }
         const std::string& name = o.positional[0];
-        std::string target = o.positional.size() >= 2 ? o.positional[1] : "";
-        bool has_target = o.positional.size() >= 2;
+        const bool has_target = o.positional.size() >= 2;
+        const std::string target = has_target ? o.positional[1] : "";
         struct timespec start;
         clock_gettime(CLOCK_MONOTONIC, &start);
         while (true) {
-            std::string cur = prop_get(name);
-            bool match = has_target ? (cur == target) : !cur.empty();
-            if (match) return 0;
+            std::string cur;
+            const bool exists = prop::read(name, &cur);
+            if (has_target ? (exists && cur == target) : exists) return 0;
             if (o.timeout >= 0) {
                 struct timespec now;
                 clock_gettime(CLOCK_MONOTONIC, &now);
-                double elapsed = (now.tv_sec - start.tv_sec) + (now.tv_nsec - start.tv_nsec) / 1e9;
+                const double elapsed =
+                    (now.tv_sec - start.tv_sec) + (now.tv_nsec - start.tv_nsec) / 1e9;
                 if (elapsed >= o.timeout) {
                     fprintf(stderr, "resetprop: timeout waiting for %s\n", name.c_str());
                     return 2;
@@ -215,22 +192,21 @@ int run(const std::vector<std::string>& args) {
     }
 
     if (o.rebuild) {
-        // 直接 mmap 重建在 bionic 公开 API 下不可达；记录并返回成功（no-op）。
-        klog("resetprop rebuild requested (no-op in bionic API build)");
+        // property area 的重建/紧凑没有实现：这里保持 no-op，但仍返回成功，
+        // 免得模块脚本因为一个可选的维护命令中断。
+        klog("resetprop: -c/--rebuild is not implemented");
         return 0;
     }
 
     if (o.positional.empty()) {
-        std::vector<std::pair<std::string, std::string>> props;
-        collect_props(props);
-        for (const auto& kv : props) printf("[%s]: [%s]\n", kv.first.c_str(), kv.second.c_str());
+        prop::list();
         return 0;
     }
 
     const std::string& name = o.positional[0];
     if (o.positional.size() == 1) {
-        std::string v = prop_get(name);
-        if (v.empty()) {
+        std::string v;
+        if (!prop::read(name, &v)) {
             fprintf(stderr, "resetprop: %s not found\n", name.c_str());
             return 1;
         }
@@ -238,18 +214,17 @@ int run(const std::vector<std::string>& args) {
         return 0;
     }
 
-    const std::string& value = o.positional[1];
-    if (!prop_set(name, value)) {
-        fprintf(stderr, "resetprop: failed to set %s\n", name.c_str());
-        return 1;
-    }
-    return 0;
+    return set_prop(name, o.positional[1], o.skip_svc) ? 0 : 1;
 }
 
 }  // namespace
 
 int resetprop_main(const std::vector<std::string>& args) { return run(args); }
 
-bool load_system_prop_file(const std::string& path) { return load_props_from_file(path, false); }
+bool load_system_prop_file(const std::string& path) {
+    // 等价 `resetprop -n --file`：模块的 system.prop 要在属性被 init 定型之前
+    // 生效，绕开 property_service 才能写 ro.*。
+    return load_props_from_file(path, true);
+}
 
 }  // namespace ncore::resetprop

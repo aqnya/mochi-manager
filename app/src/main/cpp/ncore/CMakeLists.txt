@@ -84,6 +84,7 @@ set(NCORE_SOURCES
     src/assets.cpp
     src/unzip.cpp
     src/properties.cpp
+    src/prop_area.cpp
     src/json.cpp
     src/config.cpp
     src/metamodule.cpp
