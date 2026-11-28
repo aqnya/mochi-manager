@@ -3,6 +3,7 @@
 #include "sepolicy.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <vector>
 
 #include "common.h"
@@ -253,7 +254,7 @@ bool serialize(const std::vector<AtomicStatement>& statements, std::vector<uint8
     return true;
 }
 
-bool apply_rules(const std::string& policy, bool strict) {
+std::vector<AtomicStatement> parse_rules(const std::string& policy, bool strict) {
     std::vector<AtomicStatement> statements;
     // 按 \n 和 ; 分段解析。
     std::string cur;
@@ -275,13 +276,17 @@ bool apply_rules(const std::string& policy, bool strict) {
         }
     }
     flush();
+    return statements;
+}
 
+bool apply_rules(const std::string& policy, bool strict) {
+    const std::vector<AtomicStatement> statements = parse_rules(policy, strict);
     if (statements.empty()) return true;
     std::vector<uint8_t> payload;
     if (!serialize(statements, payload)) return false;
     int applied = kzcall::set_sepolicy(payload);
     if (applied >= 0 && static_cast<size_t>(applied) < statements.size()) {
-        if (strict) return false;
+        return !strict;
     }
     return true;
 }
@@ -305,10 +310,23 @@ bool check_rule(const std::string& policy) {
     std::string text = policy;
     if (path_exists(policy)) {
         if (!read_file_to_string(policy, text)) return false;
+    } else if (policy.find('/') != std::string::npos) {
+        // 看着像路径却不存在。别退回「当成内联规则去解析」，那样只会得到一句
+        // 莫名其妙的 parse 失败（/dev/tmp/sepolicy.rule 被当成一条语句）。
+        fprintf(stderr, "! sepolicy: no such rule file: %s\n", policy.c_str());
+        return false;
     }
     try {
-        return apply_rules(trim(text), true);
-    } catch (const Error&) {
+        // 只做语法校验，绝不下发到内核：模块安装脚本（customize.sh）在真正应用
+        // 规则之前会先 `ncore sepolicy check` 探一次路，check 要是顺手把规则推
+        // 进 live policy，等于安装失败也会留下半套规则；而且内核返回的是「实际
+        // 应用条数」，本机策略缺类型时就会小于总数，check 被误判成失败。
+        // 上游 Rust 版的 check_rule 同样只 parse。
+        parse_rules(trim(text), true);
+        return true;
+    } catch (const Error& e) {
+        // 失败原因得让安装日志看得见，否则只剩一句 "Unable to apply SELinux patches!"。
+        fprintf(stderr, "! sepolicy: %s\n", e.what());
         return false;
     }
 }
