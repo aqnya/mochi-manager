@@ -11,6 +11,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -191,6 +193,9 @@ object SuProfileStore {
     /** 写内核是 IO 操作，不挂在界面协程上（页面退出也要写完）。 */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** 内核写入串行化：开关来回点时，落盘顺序必须跟界面最终状态一致。 */
+    private val kernelLock = Mutex()
+
     fun init(context: Context) {
         if (prefs != null) return
         val p = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -251,7 +256,7 @@ object SuProfileStore {
         val next = _profiles.value.toMutableMap().apply { put(profile.appUid, profile) }
         _profiles.value = next
         persist(next)
-        writeKernel(profile)
+        syncKernel(profile)
     }
 
     fun reset(
@@ -259,10 +264,13 @@ object SuProfileStore {
         uid: Int,
     ) {
         init(context)
+        val previous = _profiles.value[uid]
         val next = _profiles.value.toMutableMap().apply { remove(uid) }
         _profiles.value = next
         persist(next)
-        revokeKernel(uid)
+        // 本地条目删掉了，内核表项与落盘条目也要一起清（JNI 的 delUid 一步做完）：
+        // 留下任何一份，重启后 ncore 都会把它恢复成「已授权」。
+        syncKernel((previous ?: SuProfile("uid $uid", uid)).copy(allowSu = false))
     }
 
     private fun persist(profiles: Map<Int, SuProfile>) {
@@ -270,47 +278,17 @@ object SuProfileStore {
     }
 
     /**
-     * 授权开关 + profile 一起写内核，随后经 libstore 落盘到 `/data/adb/nksu/profile`
-     * （内核表是易失的，重启后 ncore 从这份文件恢复授权）。落盘失败不回滚内核写入，
-     * 但要如实告警。
+     * 把一次授权/撤销同步到内核。落盘由 JNI 一并完成（见 [applyKernel]），
+     * 这里只负责「什么时候写、按什么顺序写」。
+     *
+     * 内核写入放在单线程串行的 [kernelLock] 里：用户在开关上来回点时，
+     * 内核与落盘的最终状态必须和界面一致，否则「先授权后撤销」可能落成
+     * 「先撤销后授权」，重启后又变回已授权。
      */
-    private fun writeKernel(profile: SuProfile) {
+    private fun syncKernel(profile: SuProfile) {
         if (!NekoKernel.available) return
         scope.launch {
-            val ok = NekoKernel.setAllowed(profile.appUid, profile.allowSu)
-            if (!ok || !profile.allowSu) return@launch
-            val wrote = NekoKernel.setProfile(
-                uid = profile.appUid,
-                caps = capsMask(profile.capabilities),
-                domain = profile.context,
-                namespace = profile.namespace,
-                rootUid = profile.runAsUid,
-            )
-            // 对齐上游 setProfileProto：无论内核 set_profile 是否报错，都把这份
-            // 配置落盘（下次启动 ncore 会再按它灌回内核）
-            val persisted =
-                NekoKernel.saveProfileToStore(
-                    uid = profile.appUid,
-                    rootUid = profile.runAsUid,
-                    caps = capsMask(profile.capabilities),
-                    ns = profile.namespace,
-                    domain = profile.context,
-                )
-            if (!persisted) {
-                Log.w(TAG, "授权落盘失败 uid=${profile.appUid}，重启后可能丢失")
-            }
-            if (!wrote) Log.w(TAG, "写入内核 profile 失败 uid=${profile.appUid}")
-        }
-    }
-
-    private fun revokeKernel(uid: Int) {
-        if (!NekoKernel.available) return
-        scope.launch {
-            if (NekoKernel.setAllowed(uid, false)) {
-                if (!NekoKernel.deleteProfileFromStore(uid)) {
-                    Log.w(TAG, "撤销授权的落盘失败 uid=$uid")
-                }
-            }
+            kernelLock.withLock { applyKernel(profile) }
         }
     }
 
@@ -405,5 +383,71 @@ object SuProfileStore {
         return buildSet {
             for (i in 0 until length()) optString(i)?.takeIf { it.isNotBlank() }?.let(::add)
         }
+    }
+}
+
+/**
+ * 内核侧的两个动作。落盘不在这里——它和内核写一起封装在 JNI 里（对齐上游
+ * `adduid` / `deluid` / `setProfileProto`），管理器只需要这两步。
+ *
+ * 抽成接口是为了让「撤销只调一次、授权按固定顺序」能被单测覆盖。
+ */
+internal interface KernelOps {
+    fun setAllowed(
+        uid: Int,
+        allow: Boolean,
+    ): Boolean
+
+    fun setProfile(
+        uid: Int,
+        caps: Long,
+        domain: String,
+        ns: Int,
+        rootUid: Int,
+    ): Boolean
+}
+
+/** [KernelOps] 的生产实现，直接转给 [NekoKernel]。 */
+internal object NekoKernelOps : KernelOps {
+    override fun setAllowed(
+        uid: Int,
+        allow: Boolean,
+    ): Boolean = NekoKernel.setAllowed(uid, allow)
+
+    override fun setProfile(
+        uid: Int,
+        caps: Long,
+        domain: String,
+        ns: Int,
+        rootUid: Int,
+    ): Boolean = NekoKernel.setProfile(uid, caps, domain, ns, rootUid)
+}
+
+/**
+ * 把一次授权/撤销落到内核。
+ *
+ * 落盘（`/data/adb/nksu/profile`）不在这一层做：JNI 的 `addUid` / `delUid` /
+ * `setProfile` 已经把「内核表项 + 落盘」封装成一次调用，与上游 NekoSU 一致。
+ * 管理器这边只要顺序对：
+ *
+ *  - 授权：先建表项（内核顺带同步路径规则），再写 profile（能力位/域/命名空间/root uid，
+ *    这一步同时落盘）；
+ *  - 撤销：一次 `setAllowed(uid, false)` 就够了，内核表项与落盘条目一起删。
+ */
+internal fun applyKernel(
+    profile: SuProfile,
+    kernel: KernelOps = NekoKernelOps,
+) {
+    val uid = profile.appUid
+    if (profile.allowSu) {
+        if (!kernel.setAllowed(uid, true)) Log.w("NekoSU/SuProfile", "写入内核授权失败 uid=$uid")
+        val caps = capsMask(profile.capabilities)
+        if (!kernel.setProfile(uid, caps, profile.context, profile.namespace, profile.runAsUid)) {
+            Log.w("NekoSU/SuProfile", "写入内核 profile / 落盘失败 uid=$uid，重启后可能丢失")
+        }
+        return
+    }
+    if (!kernel.setAllowed(uid, false)) {
+        Log.w("NekoSU/SuProfile", "撤销失败 uid=$uid，重启后可能仍是已授权状态")
     }
 }

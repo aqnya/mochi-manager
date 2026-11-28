@@ -57,18 +57,6 @@ object NekoNative {
     @JvmStatic
     private external fun nativeReadRootFile(path: String): ByteArray?
 
-    @JvmStatic
-    private external fun nativeSaveProfile(
-        uid: Int,
-        rootUid: Int,
-        caps: Long,
-        ns: Int,
-        domain: String,
-    ): Int
-
-    @JvmStatic
-    private external fun nativeDeleteProfile(uid: Int): Int
-
     fun version(): String? = call { nativeVersion() }
 
     fun available(): Boolean = call { nativeAvailable() } ?: false
@@ -78,10 +66,16 @@ object NekoNative {
 
     fun addUid(uid: Int): Boolean = call { nativeAddUid(uid) } == 0
 
+    /** 撤销授权：删内核表项 + 删落盘条目，一次 JNI 调用搞定。 */
     fun delUid(uid: Int): Boolean = call { nativeDelUid(uid) } == 0
 
     fun listProfiles(): String? = call { nativeListProfiles() }
 
+    /**
+     * 写一条 profile：内核表项 + `/data/adb/nksu/profile` 落盘，两者在同一次 JNI
+     * 调用里完成（对齐上游 `setProfileProto`）。返回 false 表示落盘失败——内核那份
+     * 可能已经写进去了，但重启后 ncore 恢复不出来。
+     */
     fun setProfile(
         uid: Int,
         caps: Long,
@@ -103,26 +97,6 @@ object NekoNative {
      * 内核不在线时调用方降级到 [com.nekosu.manager.data.RootShell]。
      */
     fun readRootFile(path: String): ByteArray? = call { nativeReadRootFile(path) }?.takeIf { it.isNotEmpty() }
-
-    /**
-     * 把一条 profile 落盘到内核侧存储 `/data/adb/nksu/profile`（libstore 实现）。
-     *
-     * fork 子进程 `setresuid(0,0,0)` 临时提权后调 `nksu_store_upsert`——与上游
-     * `setProfileProto`（内核 set_profile + store::profile::save）的落盘语义一致：
-     * 读现有文件 → 按 uid upsert → 临时文件 + fsync + rename 原子写回。ncore 重启
-     * 时从这份文件恢复授权，管理器只写内核不落盘的话授权活不过一次重启。
-     * 成功返回 true；内核不在线 / 提权失败 / 写失败返回 false。
-     */
-    fun saveProfile(
-        uid: Int,
-        rootUid: Int,
-        caps: Long,
-        ns: Int,
-        domain: String,
-    ): Boolean = call { nativeSaveProfile(uid, rootUid, caps, ns, domain) } == 0
-
-    /** 从落盘存储删除一条 profile（撤销授权）；幂等，成功返回 true。 */
-    fun deleteProfile(uid: Int): Boolean = call { nativeDeleteProfile(uid) } == 0
 
     private inline fun <T> call(block: () -> T): T? {
         if (!loaded) return null

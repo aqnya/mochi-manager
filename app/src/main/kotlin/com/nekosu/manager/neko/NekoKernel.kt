@@ -46,16 +46,23 @@ object NekoKernel {
 
     fun isAllowed(uid: Int): Boolean? = NekoNative.hasUid(uid)
 
-    /** 授权/取消授权。返回是否确实写进内核。 */
+    /**
+     * 授权/取消授权。取消时内核表项与落盘条目一起清（JNI 里完成）；
+     * 返回是否成功——false 说明落盘没删掉，重启后可能又变回已授权。
+     */
     fun setAllowed(
         uid: Int,
         allow: Boolean,
     ): Boolean {
         val ok = if (allow) NekoNative.addUid(uid) else NekoNative.delUid(uid)
-        if (!ok) Log.w(TAG, "写入内核授权失败 uid=$uid allow=$allow")
+        if (!ok) Log.w(TAG, "写入内核授权状态失败 uid=$uid allow=$allow")
         return ok
     }
 
+    /**
+     * 写一条 profile：内核表项 + 落盘一起，由 JNI 单次完成（对齐上游 setProfileProto）。
+     * 失败只表示落盘没成功——内核那份通常已经生效。
+     */
     fun setProfile(
         uid: Int,
         caps: Long,
@@ -64,21 +71,9 @@ object NekoKernel {
         rootUid: Int,
     ): Boolean {
         val ok = NekoNative.setProfile(uid, caps, domain, namespace, rootUid)
-        if (!ok) Log.w(TAG, "写入内核 profile 失败 uid=$uid")
+        if (!ok) Log.w(TAG, "写入内核 profile / 落盘失败 uid=$uid")
         return ok
     }
-
-    /** 把一条 profile 落盘到 `/data/adb/nksu/profile`（libstore），重启后 ncore 据此恢复。 */
-    fun saveProfileToStore(
-        uid: Int,
-        rootUid: Int,
-        caps: Long,
-        ns: Int,
-        domain: String,
-    ): Boolean = NekoNative.saveProfile(uid, rootUid, caps, ns, domain)
-
-    /** 从落盘存储删除一条 profile（撤销授权，幂等）。 */
-    fun deleteProfileFromStore(uid: Int): Boolean = NekoNative.deleteProfile(uid)
 
     /** 内核特性表（`<id> <name> <value>`），用于关于页/诊断。 */
     fun features(): Map<String, Long>? {

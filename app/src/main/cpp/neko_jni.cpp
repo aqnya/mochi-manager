@@ -223,6 +223,31 @@ template <typename Op>
     _exit(rc == 0 ? 0 : 2);
 }
 
+/// 把一条 profile upsert 到落盘存储（fork 子进程临时提权），成功返回 true。
+/// 与上游 `store::profile::save` 同一份文件、同一套二进制格式。
+bool persist_profile(uint32_t uid, uint32_t root_uid, uint64_t caps, int32_t ns, const char* domain) {
+    nksu_profile entry = {};
+    entry.uid = uid;
+    entry.root_uid = root_uid;
+    entry.caps = caps;
+    entry.ns = ns;
+    std::strncpy(entry.domain, domain, NKSU_STORE_DOMAIN_MAX - 1);
+    entry.domain[NKSU_STORE_DOMAIN_MAX - 1] = '\0';
+
+    const pid_t pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) store_child([&] { return nksu_store_upsert(&entry); });
+    return wait_child(pid);
+}
+
+/// 从落盘存储删一条 profile（幂等），成功返回 true。
+bool remove_persisted_profile(uint32_t uid) {
+    const pid_t pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) store_child([&] { return nksu_store_delete(uid); });
+    return wait_child(pid);
+}
+
 }  // namespace
 
 extern "C" {
@@ -266,7 +291,16 @@ Java_com_nekosu_manager_neko_NekoNative_nativeDelUid(JNIEnv*, jclass, jint uid) 
     uint8_t data[FMAC_DATA_UID] = {};
     put_u32(data, FMAC_OFF_UID, static_cast<uint32_t>(uid));
     const int ret = ioc(IOC_DEL_UID, data, sizeof(data));
-    return ret < 0 ? ret : 0;
+    // 条目本来就不在表里（内核对 clear 返回 -ENOENT）说明已经是撤销状态：
+    // 撤销必须幂等，不能因为内核这一步就跳过落盘清理。
+    if (ret < 0 && ret != -ENOENT) LOGE("del_uid 失败 uid=%d ret=%d", uid, ret);
+
+    // 与上游 deluid 一致：内核表项和落盘条目一起清，管理器只调这一个函数。
+    if (!remove_persisted_profile(static_cast<uint32_t>(uid))) {
+        LOGE("撤销落盘失败 uid=%d", uid);
+        return -1;
+    }
+    return 0;
 }
 
 /// profile 表文本：每行 `<uid> <caps_hex> <ns> <domain>`；失败返回 null。
@@ -285,16 +319,32 @@ Java_com_nekosu_manager_neko_NekoNative_nativeSetProfile(
     put_u32(data, FMAC_OFF_UID, static_cast<uint32_t>(uid));
     put_u64(data, FMAC_OFF_CAPS, static_cast<uint64_t>(caps));
 
+    // 拷到本地再释放：后面 fork 落盘时还要用这个字符串，不能指望 JNI 的指针一直有效
+    char domain_buf[NKSU_STORE_DOMAIN_MAX] = {};
     const char* domain_chars = env->GetStringUTFChars(domain, nullptr);
     if (domain_chars == nullptr) return -EINVAL;
-    put_cstr(data + FMAC_OFF_DOMAIN, FMAC_OFF_NS - FMAC_OFF_DOMAIN, domain_chars);
+    std::strncpy(domain_buf, domain_chars, sizeof(domain_buf) - 1);
     env->ReleaseStringUTFChars(domain, domain_chars);
+    put_cstr(data + FMAC_OFF_DOMAIN, FMAC_OFF_NS - FMAC_OFF_DOMAIN, domain_buf);
 
     put_u32(data, FMAC_OFF_NS, static_cast<uint32_t>(ns));
     put_u32(data, FMAC_OFF_ROOT_UID, static_cast<uint32_t>(root_uid));
 
     const int ret = ioc(IOC_SET_PROFILE, data, sizeof(data));
-    return ret < 0 ? ret : 0;
+    if (ret < 0) {
+        // 与上游 set_profile 一致：内核写失败只记录，不中断——落盘那份仍然要写，
+        // ncore 下次启动会按它重新灌回内核
+        LOGE("set_profile 失败 uid=%d ret=%d", uid, ret);
+    }
+
+    // 落盘与内核写合并在同一个 JNI 调用里（对齐上游 setProfileProto）：管理器只调一次，
+    // 不必也不该再单独走一遍 saveProfile，否则两步之间失败就会留下半套状态。
+    if (!persist_profile(static_cast<uint32_t>(uid), static_cast<uint32_t>(root_uid),
+                         static_cast<uint64_t>(caps), ns, domain_buf)) {
+        LOGE("profile 落盘失败 uid=%d", uid);
+        return -1;
+    }
+    return 0;
 }
 
 /// 内核特性表文本：每行 `<id> <name> <value>`；失败返回 null。
@@ -373,45 +423,6 @@ Java_com_nekosu_manager_neko_NekoNative_nativeReadRootFile(JNIEnv* env, jclass, 
     env->SetByteArrayRegion(result, 0, static_cast<jsize>(data.size()),
                             reinterpret_cast<const jbyte*>(data.data()));
     return result;
-}
-
-/// 把一条 profile 落盘到 /data/adb/nksu/profile（libstore 实现，fork 子进程临时
-/// 提权执行）。返回 0 成功；-1 环境/fork 问题；1 提权失败；2 store 操作失败。
-/// 对齐上游 setProfileProto 的行为：内核 set_profile 之后再调这里落盘。
-JNIEXPORT jint JNICALL
-Java_com_nekosu_manager_neko_NekoNative_nativeSaveProfile(
-    JNIEnv* env, jclass, jint uid, jint root_uid, jlong caps, jint ns, jstring jdomain) {
-    nksu_profile entry = {};
-    entry.uid = static_cast<uint32_t>(uid);
-    entry.root_uid = static_cast<uint32_t>(root_uid);
-    entry.caps = static_cast<uint64_t>(caps);
-    entry.ns = ns;
-
-    const char* domain_chars = env->GetStringUTFChars(jdomain, nullptr);
-    if (domain_chars == nullptr) return -1;
-    std::strncpy(entry.domain, domain_chars, NKSU_STORE_DOMAIN_MAX - 1);
-    entry.domain[NKSU_STORE_DOMAIN_MAX - 1] = '\0';
-    env->ReleaseStringUTFChars(jdomain, domain_chars);
-
-    const pid_t pid = fork();
-    if (pid < 0) return -1;
-    if (pid == 0) {
-        store_child([&] { return nksu_store_upsert(&entry); });
-    }
-    if (!wait_child(pid)) return -1;
-    return 0;
-}
-
-/// 从落盘存储删除一条 profile（撤销授权时调用，幂等）。返回值含义同上。
-JNIEXPORT jint JNICALL
-Java_com_nekosu_manager_neko_NekoNative_nativeDeleteProfile(JNIEnv*, jclass, jint uid) {
-    const pid_t pid = fork();
-    if (pid < 0) return -1;
-    if (pid == 0) {
-        store_child([&] { return nksu_store_delete(static_cast<uint32_t>(uid)); });
-    }
-    if (!wait_child(pid)) return -1;
-    return 0;
 }
 
 }  // extern "C"
