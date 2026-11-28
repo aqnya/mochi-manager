@@ -191,10 +191,6 @@
     <string name="repo_integrity">安装包来自 GitHub Release，安装前会核对记录的文件大小与 SHA-256，不一致就删掉不安装。</string>
 
     <!-- 设置 -->
-    <string name="settings_check_update">检查更新</string>
-    <string name="settings_check_update_summary">启动时检查管理器的新版本</string>
-    <string name="settings_module_check_update">检查模块更新</string>
-    <string name="settings_ui_mode">界面风格</string>
     <string name="settings_theme">主题</string>
     <string name="settings_theme_summary">配色、字体、圆角与动效</string>
     <string name="theme_section_materials">材质</string>
@@ -211,30 +207,16 @@
     <string name="theme_glass_warning_title">开启玻璃材质？</string>
     <string name="theme_glass_warning_message">玻璃材质每帧都要采样背后的页面，GPU 与耗电会略高。可以在这里随时关闭。</string>
     <string name="theme_glass_enable">开启</string>
-    <string name="settings_sucompat">Root 兼容模式</string>
-    <string name="settings_mode_enable_by_default">默认启用</string>
-    <string name="settings_mode_disable_until_reboot">重启前禁用</string>
-    <string name="settings_mode_disable_always">始终禁用</string>
     <string name="settings_kernel_umount">内核级卸载</string>
     <string name="settings_kernel_umount_summary">按应用的卸载策略在内核层隐藏模块</string>
     <string name="settings_selinux_hide">隐藏 SELinux 修改</string>
     <string name="settings_selinux_hide_summary">对已授权应用隐藏 SELinux 的 permissive 状态</string>
-    <string name="settings_sulog">超级用户日志</string>
-    <string name="settings_sulog_summary">记录 su 授权与命令执行</string>
-    <string name="settings_adb_root">ADB Root</string>
-    <string name="settings_adb_root_summary">允许 adb shell 直接获得 root</string>
-    <string name="settings_soft_reboot">软重启</string>
-    <string name="settings_soft_reboot_summary">重启系统服务而不是整机，速度更快</string>
-    <string name="settings_umount_modules_default">默认卸载模块</string>
-    <string name="settings_umount_modules_default_summary">新应用默认使用「卸载模块」策略</string>
     <string name="reboot_menu_title">重启</string>
     <string name="reboot_system">重启</string>
     <string name="reboot_userspace">用户空间重启</string>
     <string name="reboot_recovery">重启到 Recovery</string>
     <string name="reboot_bootloader">重启到 Bootloader</string>
     <string name="reboot_edl">重启到 EDL 模式</string>
-    <string name="enable_web_debugging">Web 调试</string>
-    <string name="enable_web_debugging_summary">允许通过 WebUI 调试模块页面</string>
 
     <!-- 关于 -->
     <string name="settings_about_summary">版本、许可证与源代码</string>
