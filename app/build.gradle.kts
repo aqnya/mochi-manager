@@ -120,7 +120,12 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
             ?: "/opt/jdk-21.0.13.1+2"
     val java = file("$candidate/bin/java")
     if (java.exists()) executable = java.absolutePath
-    maxHeapSize = "2g"
+    // 全量跑 150+ 个用例（含 7 个 NATIVE 图形渲染）时，2g 会在最后一批上 OOM：
+    // sandbox 的 classloader 与 Skia 的 native 占用都留在同一个 JVM 里。4g 留
+    // 余量；forkEvery 定期换进程，避免长跑累积。
+    maxHeapSize = "4g"
+    // 按测试类计（当前 23 个类），8 个类换一次进程。
+    forkEvery = 8
 }
 
 dependencies {

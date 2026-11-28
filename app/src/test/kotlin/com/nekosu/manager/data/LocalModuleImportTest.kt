@@ -19,7 +19,7 @@ import org.robolectric.annotation.Config
  * 一个文本文件塞进 ncore 只会得到一行难以理解的解包错误。
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class LocalModuleImportTest {
     private fun temp(bytes: ByteArray): File =
         File.createTempFile("module", ".zip").apply {

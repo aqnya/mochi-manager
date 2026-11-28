@@ -17,7 +17,7 @@ import org.robolectric.annotation.Config
  *  - 撤销：一次 `removeProfile`，内核表项与落盘条目一起删（幂等）。
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class SuProfileKernelTest {
     private class FakeKernel(
         private val profileResult: Boolean = true,

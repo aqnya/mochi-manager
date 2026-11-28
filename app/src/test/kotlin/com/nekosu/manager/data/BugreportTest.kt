@@ -19,7 +19,7 @@ import org.robolectric.annotation.Config
  * 且关键命令不能被改掉（dmesg / logcat / getenforce / /data/adb）。
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class BugreportTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 

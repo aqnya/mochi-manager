@@ -22,7 +22,7 @@ import org.robolectric.annotation.Config
  * 整套内核调用要安静地返回不可用」，而不是抛异常把界面拖垮。
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class NekoWiringTest {
     @Test
     fun `没有 native 库时内核通道判为不可用`() {

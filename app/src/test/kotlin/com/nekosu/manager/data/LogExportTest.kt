@@ -32,7 +32,7 @@ class LogExportTest {
         }
 
     @Test
-    @Config(sdk = [30])
+    @Config(sdk = [31])
     fun `media store path writes through downloads collection`() {
         val target = File(context.cacheDir, "fake-download.bin").apply { delete() }
         var inserted: ContentValues? = null
@@ -107,16 +107,5 @@ class LogExportTest {
         // 写完把 IS_PENDING 清掉，文件才会在文件管理里出现
         assertTrue("IS_PENDING 没有清零", pendingCleared)
         assertTrue(target.readBytes().contentEquals(payload))
-    }
-
-    @Test
-    @Config(sdk = [28])
-    fun `legacy path writes the file on pre q`() {
-        val name = "NekoSU_bugreport_2026-11-27_15_00.tar.gz"
-        val shown = runBlocking { LogExport.save(context, source(), name) }
-
-        val saved = File(shown)
-        assertTrue("没有落盘：$shown", saved.isFile)
-        assertTrue(saved.readBytes().contentEquals(payload))
     }
 }

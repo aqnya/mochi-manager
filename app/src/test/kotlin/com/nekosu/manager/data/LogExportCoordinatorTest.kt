@@ -20,7 +20,7 @@ import org.robolectric.annotation.Config
  * 这里锁住两点：确认后必须离开 ConfirmPartial；dismiss / cancelPartial 不得删除仍在使用的报告。
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class LogExportCoordinatorTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 

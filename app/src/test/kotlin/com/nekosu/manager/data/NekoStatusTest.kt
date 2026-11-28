@@ -16,7 +16,7 @@ import org.robolectric.annotation.Config
  * 曾经部署过就报成已安装——那正是之前首页显示假数据的原因。
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class NekoStatusTest {
     @Test
     fun `test 输出 present 判为存在`() {

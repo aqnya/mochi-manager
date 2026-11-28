@@ -19,3 +19,6 @@ local.properties
 
 # ncore 由 CMake 直接构建；jniLibs 里再放一份会和 AGP 的 obj/<abi> 产物冲突
 /app/src/main/jniLibs/
+
+# Kotlin 2.x 的本地编译会话缓存
+/.kotlin/

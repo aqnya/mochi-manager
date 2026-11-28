@@ -14,7 +14,7 @@ import org.robolectric.annotation.Config
  * 字段都当可选处理：坏一条数据丢 null，让界面给出明确提示而不是崩。
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class ModuleUpdateTest {
     @Test
     fun `解析标准 updateJson`() {

@@ -18,7 +18,7 @@ import org.robolectric.annotation.Config
  * 这里只断言「取值成功且落在允许集合里」，具体机型不做假设。
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class DeviceInfoTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 

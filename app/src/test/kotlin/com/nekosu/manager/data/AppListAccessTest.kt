@@ -13,7 +13,7 @@ import org.robolectric.annotation.Config
 
 /** 「读取应用列表」受限判定与跳转目标。 */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class AppListAccessTest {
     private val app: Application = ApplicationProvider.getApplicationContext()
 

@@ -17,7 +17,7 @@ import org.robolectric.annotation.Config
  * 真机上只看到「加载模块仓库失败」，很难一眼看出是权限而不是网络的问题。
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class ManifestPermissionsTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 

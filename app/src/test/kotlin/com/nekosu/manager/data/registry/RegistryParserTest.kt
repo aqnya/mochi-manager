@@ -20,7 +20,7 @@ import org.robolectric.annotation.Config
  * Robolectric 起在 30 上是因为 `org.json` 在纯 JVM 单测里只有空壳实现。
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class RegistryParserTest {
     private val base = "https://modules.kernelsu.org"
 

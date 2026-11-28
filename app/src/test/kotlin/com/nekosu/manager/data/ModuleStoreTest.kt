@@ -15,7 +15,7 @@ import org.robolectric.annotation.Config
  * 两种写法都要能吃下，缺字段时不能把整条丢掉。
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class ModuleStoreTest {
     @Test
     fun `解析完整的模块条目`() {

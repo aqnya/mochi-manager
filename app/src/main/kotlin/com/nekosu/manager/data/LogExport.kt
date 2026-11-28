@@ -1,10 +1,7 @@
 package com.nekosu.manager.data
 
-import android.Manifest
 import android.content.ContentValues
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
@@ -34,11 +31,7 @@ object LogExport {
         mime: String = MIME,
     ): String =
         withContext(Dispatchers.IO) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                saveViaMediaStore(context, file, displayName, mime)
-            } else {
-                saveToDownloads(context, file, displayName)
-            }
+            saveViaMediaStore(context, file, displayName, mime)
         }
 
     /** Android 10+：MediaStore 不需要任何权限，文件会出现在「下载」里并被媒体库索引。 */
@@ -78,28 +71,5 @@ object LogExport {
             throw e
         }
         return "${Environment.DIRECTORY_DOWNLOADS}/$FOLDER/$displayName"
-    }
-
-    /** Android 9 及以下：有写外部存储权限就写公共下载目录，没有就退到应用自己的外部目录。 */
-    @Suppress("DEPRECATION")
-    private fun saveToDownloads(
-        context: Context,
-        file: File,
-        displayName: String,
-    ): String {
-        val granted =
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
-                context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
-                PackageManager.PERMISSION_GRANTED
-        val dir =
-            if (granted) {
-                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), FOLDER)
-            } else {
-                context.getExternalFilesDir(FOLDER) ?: File(context.filesDir, FOLDER)
-            }
-        if (!dir.isDirectory && !dir.mkdirs()) throw IOException("无法创建 ${dir.absolutePath}")
-        val target = File(dir, displayName)
-        file.inputStream().use { input -> target.outputStream().use { input.copyTo(it) } }
-        return target.absolutePath
     }
 }

@@ -22,7 +22,7 @@ import org.robolectric.annotation.Config
  * 并且因为 value 非空直接跳过加载，一直停在旧图标上。
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30], qualifiers = "w411dp-h914dp-xxhdpi")
+@Config(sdk = [31], qualifiers = "w411dp-h914dp-xxhdpi")
 class AppIconTest {
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()

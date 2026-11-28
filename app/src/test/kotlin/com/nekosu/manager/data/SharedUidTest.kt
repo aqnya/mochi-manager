@@ -19,7 +19,7 @@ import org.robolectric.annotation.Config
  * - 配置按 uid 存取，组内任一个包进来看到的都是同一份。
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class SharedUidTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 

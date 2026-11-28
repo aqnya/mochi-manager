@@ -14,7 +14,7 @@ import org.robolectric.annotation.Config
 
 /** 外观设置：玻璃开关和样式要真的落盘，重启后主题根节点才能读回同一套。 */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 class AppearanceSettingsTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
     private val prefs: SharedPreferences
