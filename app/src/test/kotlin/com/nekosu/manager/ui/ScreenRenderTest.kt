@@ -25,6 +25,8 @@ import com.nekosu.manager.data.SuProfileStore
 import com.nekosu.manager.ui.home.HomeScreen
 import com.nekosu.manager.ui.module.ModuleScreen
 import com.nekosu.manager.ui.profile.AppProfileScreen
+import com.nekosu.manager.ui.settings.AboutScreen
+import com.nekosu.manager.ui.settings.OpenSourceScreen
 import com.nekosu.manager.ui.settings.SettingsScreen
 import com.nekosu.manager.ui.settings.ThemeScreen
 import com.nekosu.manager.ui.superuser.SuperUserScreen
@@ -173,15 +175,21 @@ class ScreenRenderTest {
     fun modules() = render("modules") { ModuleScreen() }
 
     @Test
-    fun settings() = render("settings") { SettingsScreen(onOpenTheme = {}) }
+    fun settings() = render("settings") { SettingsScreen(onOpenTheme = {}, onOpenAbout = {}) }
 
     @Test
     fun theme() = render("theme") { ThemeScreen(onBack = {}) }
 
+    @Test
+    fun about() = render("about") { AboutScreen(onBack = {}, onOpenOpenSource = {}) }
+
+    @Test
+    fun openSource() = render("open-source") { OpenSourceScreen(onBack = {}) }
+
     /** 「保存日志 / 发送日志」在设置页底部，滚动过去单独截一张。 */
     @Test
     fun settingsLog() = render("settings-log", scrollTo = "保存日志") {
-        SettingsScreen(onOpenTheme = {})
+        SettingsScreen(onOpenTheme = {}, onOpenAbout = {})
     }
 
     @Test

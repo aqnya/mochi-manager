@@ -235,4 +235,16 @@
     <string name="reboot_edl">重启到 EDL 模式</string>
     <string name="enable_web_debugging">Web 调试</string>
     <string name="enable_web_debugging_summary">允许通过 WebUI 调试模块页面</string>
+
+    <!-- 关于 -->
+    <string name="settings_about_summary">版本、许可证与源代码</string>
+    <string name="about_information">应用信息</string>
+    <string name="about_license">许可证</string>
+    <string name="about_license_value">GPL-3.0-or-later</string>
+    <string name="about_project">项目</string>
+    <string name="about_repository">源代码仓库</string>
+    <string name="about_repository_summary">在 GitHub 查看 NekoSU 源码</string>
+    <string name="about_open_source">开放源代码许可</string>
+    <string name="about_open_source_summary">查看随应用分发组件的开源许可</string>
+    <string name="about_unknown_version">未知版本</string>
 </resources>

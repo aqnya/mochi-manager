@@ -43,6 +43,7 @@ import ui.feice.mochi.navigation.MochiLazyLargeTitleScaffold
 @Composable
 fun SettingsScreen(
     onOpenTheme: () -> Unit,
+    onOpenAbout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var checkUpdate by rememberSaveable { mutableStateOf(true) }
@@ -176,9 +177,10 @@ fun SettingsScreen(
                 )
                 MochiListRow(
                     stringResource(R.string.about),
+                    subtitle = stringResource(R.string.settings_about_summary),
                     leading = { KsuTile("information-circle", KsuTileColors.Blue) },
                     chevron = true,
-                    onClick = {},
+                    onClick = onOpenAbout,
                 )
             }
         }

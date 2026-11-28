@@ -17,6 +17,8 @@ import com.nekosu.manager.ui.module.ModuleRepoDetailScreen
 import com.nekosu.manager.ui.module.ModuleRepoScreen
 import com.nekosu.manager.ui.module.ModuleScreen
 import com.nekosu.manager.ui.profile.AppProfileScreen
+import com.nekosu.manager.ui.settings.AboutScreen
+import com.nekosu.manager.ui.settings.OpenSourceScreen
 import com.nekosu.manager.ui.settings.SettingsScreen
 import com.nekosu.manager.ui.settings.ThemeScreen
 import com.nekosu.manager.ui.superuser.SuperUserScreen
@@ -35,6 +37,8 @@ private const val RouteModuleRepo = "module/repo"
 private const val RouteModuleDetail = "module/repo/detail"
 private const val RouteModuleInstall = "module/install"
 private const val RouteTheme = "settings/theme"
+private const val RouteAbout = "settings/about"
+private const val RouteOpenSource = "settings/about/open-source"
 
 private data class RootTab(
     val label: String,
@@ -118,6 +122,14 @@ fun MochiRoot() {
 
             RouteTheme -> ThemeScreen(onBack = { navigator.pop() })
 
+            RouteAbout ->
+                AboutScreen(
+                    onBack = { navigator.pop() },
+                    onOpenOpenSource = { navigator.push(RouteOpenSource) },
+                )
+
+            RouteOpenSource -> OpenSourceScreen(onBack = { navigator.pop() })
+
             else ->
                 MainTabs(
                     moduleReloadKey = moduleReloadKey,
@@ -128,6 +140,7 @@ fun MochiRoot() {
                     onOpenRepo = { navigator.push(RouteModuleRepo) },
                     onOpenInstall = { navigator.push(RouteModuleInstall) },
                     onOpenTheme = { navigator.push(RouteTheme) },
+                    onOpenAbout = { navigator.push(RouteAbout) },
                 )
         }
     }
@@ -141,6 +154,7 @@ private fun MainTabs(
     onOpenRepo: () -> Unit,
     onOpenInstall: () -> Unit,
     onOpenTheme: () -> Unit,
+    onOpenAbout: () -> Unit,
 ) {
     val tabState = rememberMochiTabScaffoldState(initialIndex = 0)
     val items =
@@ -169,7 +183,7 @@ private fun MainTabs(
                     reloadKey = moduleReloadKey,
                     modifier = Modifier,
                 )
-            else -> SettingsScreen(onOpenTheme = onOpenTheme)
+            else -> SettingsScreen(onOpenTheme = onOpenTheme, onOpenAbout = onOpenAbout)
         }
     }
 }
