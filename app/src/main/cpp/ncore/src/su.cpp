@@ -26,22 +26,29 @@ namespace ncore::su {
 
 namespace {
 
+// 帮助文本同时是**能力声明**：termux 的 sudo（agnostic-apollo/sudo）会先跑
+// `su --help`，用 `*"--shell"*`、`*"--preserve-environment"*`、`*"--mount-master"*`
+// 这类字面量判断这个 su 能不能用，缺一个就跳过、继续找下一个，最后报
+// "No 'su' binary found that supports the '-c', '--shell', ... options"。
+// 所以长选项必须原样出现在这里，不能只写短选项。
 void print_usage(const std::string& program) {
-    printf("NekoSU\n\nUsage: %s [options] [-] [user [argument...]]\n", program.c_str());
     printf(
+        "NekoSU\n\n"
+        "Usage: %s [options] [-] [user [argument...]]\n\n"
         "Options:\n"
-        "  -c COMMAND      pass COMMAND to the invoked shell\n"
-        "  -h, --help      display this help message and exit\n"
-        "  -l, --login     pretend the shell to be a login shell\n"
-        "  -p, --preserve-environment  preserve the entire environment\n"
-        "  -s SHELL        use SHELL instead of the default /system/bin/sh\n"
-        "  -v, --version   display version number and exit\n"
-        "  -V              display version code and exit\n"
-        "  -M, --mount-master  force run in the global mount namespace\n"
-        "  -g GROUP        specify the primary group\n"
-        "  -G GROUP        specify a supplementary group (repeatable)\n"
-        "  --no-new-privs  prevent privilege re-escalation\n"
-        "  -Z CONTEXT      specify the SELinux context\n");
+        "  -c, --command COMMAND         pass COMMAND to the invoked shell\n"
+        "  -h, --help                    display this help message and exit\n"
+        "  -, -l, --login                pretend the shell to be a login shell\n"
+        "  -m, -p, --preserve-environment  preserve the entire environment\n"
+        "  -s, --shell SHELL             use SHELL instead of the default /system/bin/sh\n"
+        "  -M, --mount-master            force run in the global mount namespace\n"
+        "  -g, --group GROUP             specify the primary group\n"
+        "  -G, --supp-group GROUP        specify a supplementary group (repeatable)\n"
+        "  -Z, --context CONTEXT         specify the SELinux context\n"
+        "  --no-new-privs                prevent privilege re-escalation\n"
+        "  -v, --version                 display version number and exit\n"
+        "  -V                            display version code and exit\n",
+        program.c_str());
 }
 
 uid_t resolve_uid(const std::string& user) {
@@ -98,13 +105,29 @@ void root_shell(int argc, char** argv_raw) {
     std::string selinux_context;
     std::vector<std::string> free_args;
 
+    // 需要带值选项的统一取值：缺参数直接报错，不再"静默降级成交互 shell"。
+    auto take_value = [&](size_t& i, const char* opt) -> std::string {
+        if (i + 1 >= argv.size()) {
+            fprintf(stderr, "su: option requires an argument -- '%s'\n", opt);
+            print_usage(program);
+            exit(1);
+        }
+        return argv[++i];
+    };
+
     for (size_t i = 1; i < argv.size(); ++i) {
         const std::string& a = argv[i];
-        if (a == "-c") {
-            if (i + 1 < argv.size()) {
-                command = argv[++i];
-                has_command = true;
-            }
+        if (a == "--") {
+            // 「选项结束」：后面的全部按位置参数处理。
+            for (++i; i < argv.size(); ++i) free_args.push_back(argv[i]);
+            break;
+        }
+        if (a == "-c" || a == "--command") {
+            command = take_value(i, "c");
+            has_command = true;
+        } else if (a.rfind("--command=", 0) == 0) {
+            command = a.substr(strlen("--command="));
+            has_command = true;
         } else if (a == "-h" || a == "--help") {
             print_usage(program);
             return;
@@ -116,32 +139,34 @@ void root_shell(int argc, char** argv_raw) {
             return;
         } else if (a == "-l" || a == "--login") {
             is_login = true;
-        } else if (a == "-p" || a == "--preserve-environment") {
+        } else if (a == "-p" || a == "-m" || a == "--preserve-environment") {
             preserve_env = true;
-        } else if (a == "-M" || a == "--mount-master" || a == "-mm") {
+        } else if (a == "-M" || a == "-mm" || a == "--mount-master") {
             mount_master = true;
         } else if (a == "--no-new-privs") {
             no_new_privs = true;
         } else if (a == "-s" || a == "--shell") {
-            if (i + 1 < argv.size()) shell = argv[++i];
-        } else if (a == "-g" || a == "--group") {
-            if (i + 1 < argv.size()) gid = parse_gid(argv[++i]);
-        } else if (a == "-G" || a == "--supp-group") {
-            if (i + 1 < argv.size()) groups.push_back(parse_gid(argv[++i]));
-        } else if (a.rfind("--supp-group=", 0) == 0) {
-            groups.push_back(parse_gid(a.substr(strlen("--supp-group="))));
+            shell = take_value(i, "s");
         } else if (a.rfind("--shell=", 0) == 0) {
             shell = a.substr(strlen("--shell="));
+        } else if (a == "-g" || a == "--group") {
+            gid = parse_gid(take_value(i, "g"));
+        } else if (a.rfind("--group=", 0) == 0) {
+            gid = parse_gid(a.substr(strlen("--group=")));
+        } else if (a == "-G" || a == "--supp-group") {
+            groups.push_back(parse_gid(take_value(i, "G")));
+        } else if (a.rfind("--supp-group=", 0) == 0) {
+            groups.push_back(parse_gid(a.substr(strlen("--supp-group="))));
+        } else if (a == "-Z" || a == "--context") {
+            selinux_context = take_value(i, "Z");
         } else if (a.rfind("--context=", 0) == 0) {
             selinux_context = a.substr(strlen("--context="));
-        } else if (a == "-Z" || a == "--context") {
-            if (i + 1 < argv.size()) selinux_context = argv[++i];
         } else if (a == "-z" || a == "-cn") {
-            // -cn 归一化为 -z（上下文），这里忽略无 context 的情况。
+            // -z / -cn 依赖后续的 -Z 取值，这里不额外处理。
         } else if (is_option(a)) {
-            printf("su: invalid option -- '%s'\n", a.c_str());
+            fprintf(stderr, "su: invalid option -- '%s'\n", a.c_str());
             print_usage(program);
-            exit(-1);
+            exit(1);
         } else {
             free_args.push_back(a);
         }
