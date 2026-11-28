@@ -10,8 +10,10 @@
 # 取代原先的 build-ncore.sh（rustup + cargo + 拷 so + 追加签名）整条链路。
 
 cmake_minimum_required(VERSION 3.22)
-project(ncore LANGUAGES CXX ASM)
+project(ncore LANGUAGES C CXX ASM)
 
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -93,6 +95,7 @@ set(NCORE_SOURCES
     src/su.cpp
     src/resetprop.cpp
     src/assets_data.cpp
+    third_party/zstd/zstddeclib.c
     "${EMBEDDED_S}"
 )
 
@@ -100,8 +103,12 @@ add_executable(ncore ${NCORE_SOURCES})
 
 target_include_directories(ncore PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd"   # zstd.h（单文件 decoder 的公开 API）
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../"   # 仓库根 uapi/*.h
 )
+
+# 第三方单文件解码器，不参与本项目的警告基线。
+set_source_files_properties(third_party/zstd/zstddeclib.c PROPERTIES COMPILE_OPTIONS "-w")
 
 target_compile_definitions(ncore PRIVATE
     NKSU_VERSION_CODE="${NKSU_VERSION_CODE}"
@@ -127,7 +134,9 @@ set_target_properties(ncore PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-# zlib：zip 解压（ inflate ）；zstd/lzma 模块 zip 极少用，store/deflate 覆盖绝大多数。
+# zlib：zip 解压的 inflate（method 8）。
+# zstd（method 95）由 third_party/zstd 的单文件 decoder 提供，无外部依赖，
+# 因为 NDK 不导出 libzstd，设备上的系统库也不保证存在。
 find_library(ZLIB z)
 target_link_libraries(ncore PRIVATE ${ZLIB})
 

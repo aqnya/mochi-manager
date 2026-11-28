@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// 最小 ZIP 读取器：基于 zlib inflate，支持 store(0)/deflate(8)，
-// 覆盖 Android 模块 zip 的绝大多数情况（对齐 Rust zip crate 的默认用途）。
+// 最小 ZIP 读取器：支持 store(0) / deflate(8) / zstd(95)。
+// 95 是 Zstandard，部分模块作者用它压缩（体积比 deflate 小很多）；
+// zstd 解码走 third_party/zstd 的单文件 decoder，不依赖系统的 libzstd。
 #include "unzip.h"
 
 #include <cstring>
 #include <zlib.h>
+#include <zstd.h>
 
 #include "common.h"
 
@@ -94,6 +96,24 @@ std::vector<uint8_t> read_entry(const std::vector<uint8_t>& data, const Entry& e
         inflateEnd(&zs);
         if (rc != Z_STREAM_END) throw Error("inflate failed: " + std::to_string(rc));
         out.resize(zs.total_out);
+    } else if (e.method == 95) {
+        // zstd。zip 中央目录里的 uncompressed size 通常是准的，但 zip64 或流式
+        // 打包时可能写 0，此时从 zstd frame header 里取；还是拿不到就报错
+        // （流式解码要自己管 window buffer，代价远超收益）。
+        size_t cap = static_cast<size_t>(e.uncompressed_size);
+        if (cap == 0) {
+            const unsigned long long sz = ZSTD_getFrameContentSize(compressed, e.compressed_size);
+            if (sz == ZSTD_CONTENTSIZE_UNKNOWN || sz == ZSTD_CONTENTSIZE_ERROR) {
+                throw Error("zstd: unknown decompressed size for " + e.name);
+            }
+            cap = static_cast<size_t>(sz);
+        }
+        out.resize(cap);
+        const size_t n = ZSTD_decompress(out.data(), out.size(), compressed, e.compressed_size);
+        if (ZSTD_isError(n)) {
+            throw Error("zstd decompress failed for " + e.name + ": " + ZSTD_getErrorName(n));
+        }
+        out.resize(n);
     } else {
         throw Error("unsupported zip compression method: " + std::to_string(e.method));
     }
