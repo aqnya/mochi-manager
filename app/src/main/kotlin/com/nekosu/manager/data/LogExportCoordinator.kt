@@ -17,7 +17,6 @@ import java.io.File
 
 private const val TAG = "NekoSU/LogExport"
 
-/** 日志的两个去向。 */
 enum class LogAction { Save, Share }
 
 /**
@@ -68,7 +67,7 @@ object LogExportCoordinator {
         // 收集或保存进行中都不允许再次开始：新一轮收集会清理缓存里的旧报告，
         // 若旧报告正被写入下载目录，就会把它删掉。
         if (state is LogExportState.Collecting || state is LogExportState.Saving) {
-            Log.d(TAG, "start ignored: busy state=$state")
+            Log.d(TAG, "start skipped state=$state")
             return
         }
         val app = context.applicationContext
@@ -89,7 +88,7 @@ object LogExportCoordinator {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                Log.e(TAG, "收集失败", e)
+                Log.e(TAG, "collect failed", e)
                 state = LogExportState.Notice(app.getString(R.string.log_failed), errorText(app, e))
             }
         }
@@ -98,10 +97,10 @@ object LogExportCoordinator {
     /** 无 root 提示框里点「继续导出」。 */
     fun confirm(context: Context) {
         val pending = state as? LogExportState.ConfirmPartial ?: return
-        Log.d(TAG, "confirm action=${pending.action} file=${pending.file.length()} 字节")
+        Log.d(TAG, "confirm action=${pending.action} bytes=${pending.file.length()}")
         // 必须先离开 ConfirmPartial：对话框的 action 回调之后往往还会再走一次 onDismissRequest，
         // 如果此时状态仍是 ConfirmPartial，dismiss/cancel 会把正在写入的源文件删掉，
-        // save 读到一半就 ENOENT（真机上表现为「分享正常、直接导出必失败」）。
+        // save 读到一半就 ENOENT。
         state = LogExportState.Saving
         deliver(context.applicationContext, pending.action, pending.file, noRoot = true)
     }
@@ -110,12 +109,12 @@ object LogExportCoordinator {
      * 无 root 提示框里点「取消」或点外部关闭。
      *
      * 只回到 Idle，**不在这里删文件**：不同版本对话框可能在 onClick 之前或之后补一次
-     * onDismissRequest，一旦删文件就会把紧接着要写入的源文件删掉（真机上「分享正常、导出失败」
-     * 的 ENOENT 就是这么来的）。残留的缓存包由 [Bugreport] 下次收集时统一清理。
+     * onDismissRequest，一旦删文件就会把紧接着要写入的源文件删掉。
+     * 残留的缓存包由 [Bugreport] 下次收集时统一清理。
      */
     fun cancelPartial() {
         if (state !is LogExportState.ConfirmPartial) return
-        Log.d(TAG, "cancelPartial，放弃本次导出")
+        Log.d(TAG, "cancel partial export")
         state = LogExportState.Idle
     }
 
@@ -132,7 +131,7 @@ object LogExportCoordinator {
     ) {
         // 报告可能已被上一次流程删掉：给出明确原因，而不是让它变成一条 ENOENT 堆栈
         if (!file.isFile || file.length() == 0L) {
-            Log.e(TAG, "报告文件不存在：${file.absolutePath}")
+            Log.e(TAG, "report file missing path=${file.absolutePath}")
             state =
                 LogExportState.Notice(
                     app.getString(R.string.log_failed),
@@ -151,7 +150,7 @@ object LogExportCoordinator {
                             throw e
                         } catch (e: Throwable) {
                             // 失败时保留 cacheDir 里的文件，用户还能走「发送日志」把它发出去
-                            Log.e(TAG, "写入下载目录失败", e)
+                            Log.e(TAG, "save to downloads failed", e)
                             state =
                                 LogExportState.Notice(
                                     app.getString(R.string.log_failed),
@@ -159,7 +158,7 @@ object LogExportCoordinator {
                                 )
                             return@launch
                         }
-                    Log.d(TAG, "saved to $path (${file.length()} bytes)")
+                    Log.d(TAG, "saved path=$path bytes=${file.length()}")
                     file.delete()
                     state =
                         LogExportState.Notice(
@@ -188,7 +187,7 @@ object LogExportCoordinator {
                     // 分享出去之后界面回到 Idle；文件留给系统分享流程持有，不在这里删
                     state = LogExportState.Idle
                 } catch (e: Throwable) {
-                    Log.e(TAG, "分享日志失败", e)
+                    Log.e(TAG, "share failed", e)
                     state = LogExportState.Notice(app.getString(R.string.log_failed), errorText(app, e))
                 }
             }

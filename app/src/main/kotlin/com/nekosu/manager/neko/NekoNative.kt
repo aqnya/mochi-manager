@@ -18,7 +18,7 @@ object NekoNative {
     /** 库是否装上。设备 ABI 不是 arm64 时加载会失败，按不可用处理。 */
     val loaded: Boolean =
         runCatching { System.loadLibrary("neko") }
-            .onFailure { Log.w(TAG, "加载 libneko.so 失败：${it.message}") }
+            .onFailure { Log.w(TAG, "load libneko.so failed", it) }
             .isSuccess
 
     @JvmStatic
@@ -101,7 +101,7 @@ object NekoNative {
     private inline fun <T> call(block: () -> T): T? {
         if (!loaded) return null
         return runCatching(block)
-            .onFailure { Log.w(TAG, "JNI 调用失败：${it.message}") }
+            .onFailure { Log.w(TAG, "JNI call failed", it) }
             .getOrNull()
     }
 }

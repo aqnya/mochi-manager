@@ -65,6 +65,8 @@ import java.util.concurrent.ConcurrentHashMap
 /** WebViewAssetLoader 使用的虚拟域名；模块网页从这里加载。 */
 private const val WEBUI_DOMAIN = "mui.kernelsu.org"
 
+private const val TAG = "NekoSU/WebUI"
+
 /** `ksu://icon/<pkg>` 返回的图标边长（像素）。 */
 private const val ICON_PX = 192
 
@@ -163,7 +165,7 @@ internal fun WebUIScreen(
                             // 只对本应命中的 WebUI 域告警：模块的本地守护进程请求
                             // （如 127.0.0.1:port）不属于资源，每次都刷屏还会拖慢日志。
                             if (response == null && url.host.equals(WEBUI_DOMAIN, ignoreCase = true)) {
-                                Log.w("NksuWebUI", "asset miss: $url")
+                                Log.w(TAG, "asset missing url=$url")
                             }
                             return response
                         }
@@ -176,7 +178,7 @@ internal fun WebUIScreen(
                             view.evaluateJavascript(
                                 "(function(){try{var b=document.body;return (b?b.innerText.length:-1)+'/'+" +
                                     "(b?b.innerHTML.length:-1)+' viewport='+window.innerWidth+'x'+window.innerHeight;}catch(e){return 'err:'+e;}})()",
-                            ) { result -> Log.d("NksuWebUI", "dom=$result") }
+                            ) { result -> Log.d(TAG, "DOM evaluated result=$result") }
                         }
 
                         override fun onReceivedError(
@@ -186,7 +188,7 @@ internal fun WebUIScreen(
                         ) {
                             if (request.isForMainFrame) {
                                 loading = false
-                                Log.w("NksuWebUI", "load error: ${error.description} for ${request.url}")
+                                Log.w(TAG, "load error desc=${error.description} url=${request.url}")
                             }
                         }
                     }
@@ -246,8 +248,9 @@ internal fun WebUIScreen(
 
                         override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
                             Log.d(
-                                "NksuWebUI",
-                                "${consoleMessage?.message()} @ ${consoleMessage?.sourceId()}:${consoleMessage?.lineNumber()}",
+                                TAG,
+                                "console msg=${consoleMessage?.message()} " +
+                                    "source=${consoleMessage?.sourceId()}:${consoleMessage?.lineNumber()}",
                             )
                             return true
                         }

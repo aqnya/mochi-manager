@@ -98,8 +98,8 @@ fun ModuleScreen(
     var enabledFirst by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
 
-    // —— 模块更新：列表载入后逐个检查 updateJson，确认有新版才亮出更新按钮；
-    //    点击 → 确认 → 下载 → 交给安装输出页 ——
+    // 模块更新：列表载入后逐个检查 updateJson，确认有新版才亮出更新按钮；
+    // 点击 → 确认 → 下载 → 交给安装输出页
     var updates by remember { mutableStateOf<Map<String, ModuleUpdateInfo>>(emptyMap()) }
     var updateCheckJob by remember { mutableStateOf<Job?>(null) }
     var updatePhase by remember { mutableStateOf<UpdatePhase>(UpdatePhase.Idle) }
@@ -147,7 +147,7 @@ fun ModuleScreen(
         scheduleUpdateChecks()
     }
 
-    // 模块列表来自 ncore（真实的 /data/adb/modules），不再有本地假数据
+    // 模块列表来自 ncore（真实的 /data/adb/modules）
     LaunchedEffect(refreshKey, reloadKey) { loadModules() }
 
     val context = LocalContext.current
@@ -190,7 +190,7 @@ fun ModuleScreen(
             }
         }
 
-    // —— 模块更新：点击后的确认与下载（检查在 scheduleUpdateChecks 里已做完） ——
+    // 模块更新：点击后的确认与下载（检查在 scheduleUpdateChecks 里已做完）
     fun beginUpdateConfirm(
         module: ModuleEntry,
         info: ModuleUpdateInfo,

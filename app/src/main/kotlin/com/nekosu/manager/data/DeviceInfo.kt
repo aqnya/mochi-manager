@@ -91,8 +91,6 @@ object DeviceInfoRepository {
     suspend fun load(context: Context): DeviceInfo =
         withContext(Dispatchers.IO) { current() ?: preload(context) }
 
-    // ---------------------------------------------------------------- 机型
-
     /** 对应 KernelSU `ui/util/DeviceNameHelper.kt` 的 `resolveDeviceName()`。 */
     fun resolveDeviceName(): String {
         val marketName =
@@ -151,8 +149,6 @@ object DeviceInfoRepository {
             it.isNotEmpty() && !it.equals(Build.UNKNOWN, ignoreCase = true) && !it.equals("null", ignoreCase = true)
         }
 
-    // ------------------------------------------------------------ 系统版本
-
     /** 只识别 HyperOS / MIUI，其余显示 Android 版本；不猜不编。 */
     private fun systemVersion(): String {
         val android = "Android ${Build.VERSION.RELEASE}"
@@ -178,8 +174,6 @@ object DeviceInfoRepository {
         return numbers.take(4).joinToString(".").ifBlank { text }
     }
 
-    // -------------------------------------------------------------- 版本号
-
     private fun managerVersion(context: Context): String {
         val pm = context.packageManager
         val info =
@@ -200,8 +194,6 @@ object DeviceInfoRepository {
     private fun versionCodeOf(info: PackageInfo): Long =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else info.versionCode.toLong()
 
-    // ------------------------------------------------------------- SELinux
-
     /** 对应 KernelSU `ui/util/SELinuxChecker.kt` 的 `getSELinuxStatusRaw()`。 */
     private fun readSELinuxStatus(): String {
         val shell = exec("getenforce")
@@ -218,13 +210,9 @@ object DeviceInfoRepository {
         return if (File("/sys/fs/selinux").exists()) "Unknown" else "Disabled"
     }
 
-    // -------------------------------------------------------------- Seccomp
-
     /** 0 = 关闭，1 = strict，2 = filter；-1 = 内核不支持或调用失败。 */
     private fun readSeccompStatus(): Int =
         runCatching { Os.prctl(PR_GET_SECCOMP, 0, 0, 0, 0) }.getOrDefault(-1)
-
-    // --------------------------------------------------------------- 内核
 
     private fun kernelVersion(): String =
         runCatching { Os.uname().release }.getOrNull()?.takeIf { it.isNotBlank() }
@@ -232,8 +220,6 @@ object DeviceInfoRepository {
                 ?.let { Regex("""Linux version (\S+)""").find(it)?.groupValues?.getOrNull(1) }
             ?: System.getProperty("os.version")?.takeIf { it.isNotBlank() }
             ?: "unknown"
-
-    // ------------------------------------------------------- 属性 / 进程
 
     /**
      * `android.os.SystemProperties` 是隐藏类，反射在部分 ROM 上会被隐藏 API 策略拦截，

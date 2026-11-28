@@ -110,7 +110,6 @@ internal object WebShell {
                 } catch (e: Exception) {
                     continue
                 }
-            // su 存在但命令跑不起来（没授权等）：已经退出且非 0，换下一个候选
             val exited = runCatching { process.exitValue() }.getOrNull()
             if (exited != null && exited != 0) {
                 runCatching { process.destroy() }
@@ -118,7 +117,7 @@ internal object WebShell {
             }
             return process
         }
-        Log.w(TAG, "没有可用的 su：${args.lastOrNull()?.take(80)}")
+        Log.w(TAG, "no su candidate cmd=${args.lastOrNull()?.take(80)}")
         return null
     }
 

@@ -83,18 +83,18 @@ int ctl_fd() {
     errno = 0;
     const int ret = prctl(NKSU_PRCTL_GET_CTL_FD, 0, 0, 0, 0);
     if (ret < 0 && errno != 0) {
-        LOGW("prctl(%d) 失败: %s（设备可能没加载 NekoSU 内核模块，或本应用不是 manager）",
+        LOGW("get ctl fd failed op=%d err=%s (kernel module not loaded, or app is not manager)",
              NKSU_PRCTL_GET_CTL_FD, std::strerror(errno));
     }
 
     // 无论 prctl 的返回值如何都扫一遍：tracepoint 路径只是把 fd 挂上来，不改写返回值。
     const int fd = scan_ctl_fd();
     if (fd < 0) {
-        LOGW("未找到 %s，内核控制通道不可用", kCtlName);
+        LOGW("ctl channel unavailable path=%s", kCtlName);
         return -1;
     }
     g_ctl_fd = fd;
-    LOGI("已获取内核控制 fd=%d", fd);
+    LOGI("ctl fd acquired fd=%d", fd);
     return fd;
 }
 
@@ -112,7 +112,7 @@ int ioc(uint32_t flag, void* data, size_t size) {
     const int ret = ioctl(fd, IOC_CMD, buffer.data());
     if (ret < 0) {
         const int err = errno;
-        LOGE("ioctl flag=%u size=%zu 失败: %s", flag, size, std::strerror(err));
+        LOGE("ioctl failed flag=%u size=%zu err=%s", flag, size, std::strerror(err));
         return -err;
     }
     if (size != 0) std::memcpy(data, buffer.data() + 8, size);
@@ -151,7 +151,7 @@ jstring new_string(JNIEnv* env, const std::string& value) {
     return env->NewStringUTF(value.c_str());
 }
 
-// —— root 文件读取（对齐上游 neko/jni 的 read_file_impl）——
+// root 文件读取（对齐上游 neko/jni 的 read_file_impl）
 // NekoSU 内核模块在线且本应用被认定为 manager 时，内核会给本 uid 放行
 // setresuid 到 0；不在线时子进程提权必然失败，Kotlin 侧据此降级到 su。
 constexpr size_t kReadChunk = 65536;
@@ -293,11 +293,11 @@ Java_com_nekosu_manager_neko_NekoNative_nativeDelUid(JNIEnv*, jclass, jint uid) 
     const int ret = ioc(IOC_DEL_UID, data, sizeof(data));
     // 条目本来就不在表里（内核对 clear 返回 -ENOENT）说明已经是撤销状态：
     // 撤销必须幂等，不能因为内核这一步就跳过落盘清理。
-    if (ret < 0 && ret != -ENOENT) LOGE("del_uid 失败 uid=%d ret=%d", uid, ret);
+    if (ret < 0 && ret != -ENOENT) LOGE("del uid failed uid=%d ret=%d", uid, ret);
 
     // 与上游 deluid 一致：内核表项和落盘条目一起清，管理器只调这一个函数。
     if (!remove_persisted_profile(static_cast<uint32_t>(uid))) {
-        LOGE("撤销落盘失败 uid=%d", uid);
+        LOGE("revoke persist failed uid=%d", uid);
         return -1;
     }
     return 0;
@@ -334,14 +334,14 @@ Java_com_nekosu_manager_neko_NekoNative_nativeSetProfile(
     if (ret < 0) {
         // 与上游 set_profile 一致：内核写失败只记录，不中断——落盘那份仍然要写，
         // ncore 下次启动会按它重新灌回内核
-        LOGE("set_profile 失败 uid=%d ret=%d", uid, ret);
+        LOGE("set profile failed uid=%d ret=%d", uid, ret);
     }
 
     // 落盘与内核写合并在同一个 JNI 调用里（对齐上游 setProfileProto）：管理器只调一次，
     // 不必也不该再单独走一遍 saveProfile，否则两步之间失败就会留下半套状态。
     if (!persist_profile(static_cast<uint32_t>(uid), static_cast<uint32_t>(root_uid),
                          static_cast<uint64_t>(caps), ns, domain_buf)) {
-        LOGE("profile 落盘失败 uid=%d", uid);
+        LOGE("persist profile failed uid=%d", uid);
         return -1;
     }
     return 0;

@@ -8,6 +8,8 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
+private const val TAG = "NekoSU/WebUI"
+
 /**
  * 以 root 读取模块 `<module>/webroot` 下的文件，作为 WebUI 静态资源返回。
  *
@@ -64,7 +66,7 @@ class ModulePathHandler(
             cache.getOrPut(key) {
                 val bytes = WebShell.readFileBytes(key)
                 if (bytes == null) {
-                    Log.w("NksuWebUI", "404 webui:$path (root=$webRoot)")
+                    Log.w(TAG, "WebUI 404 path=$path root=$webRoot")
                 }
                 Cached(MimeUtil.guess(file.name.orEmpty()), bytes)
             }

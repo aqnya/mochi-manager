@@ -61,14 +61,14 @@ object Bugreport {
             val script = File(dir, "collect.sh").apply { writeText(collectScript(dir)) }
             // 探测本身会弹 KernelSU 授权框；被拒绝/超时/没装 su 都按「无 root」处理，继续往下收集
             val rooted = RootShell.isRootAvailable()
-            Log.d(TAG, "开始收集 rooted=$rooted dir=${dir.absolutePath}")
+            Log.d(TAG, "collect start rooted=$rooted dir=${dir.absolutePath}")
             val collected =
                 if (rooted) {
                     RootShell.exec("sh ${quote(script.absolutePath)}", COLLECT_TIMEOUT_SECONDS)
                 } else {
                     RootShell.execAsUser("sh ${quote(script.absolutePath)}", LOCAL_TIMEOUT_SECONDS)
                 }
-            Log.d(TAG, "收集结束 exit=${collected.exitCode} 输出=${collected.output.length} 字")
+            Log.d(TAG, "collect done exit=${collected.exitCode} outChars=${collected.output.length}")
             if (collected.exitCode != 0) {
                 throw BugreportException(
                     collected.output.ifBlank { "收集脚本退出码 ${collected.exitCode}" },
@@ -92,7 +92,11 @@ object Bugreport {
                 } else {
                     RootShell.execAsUser(packCommand, PACK_TIMEOUT_SECONDS)
                 }
-            Log.d(TAG, "打包结束 exit=${packed.exitCode} 文件=${target.isFile} 大小=${if (target.isFile) target.length() else -1}")
+            Log.d(
+                TAG,
+                "pack done exit=${packed.exitCode} exists=${target.isFile} " +
+                    "bytes=${if (target.isFile) target.length() else -1}",
+            )
             if (packed.exitCode != 0 || !target.isFile || target.length() == 0L) {
                 target.delete()
                 throw BugreportException(packed.output.ifBlank { "打包失败，退出码 ${packed.exitCode}" })

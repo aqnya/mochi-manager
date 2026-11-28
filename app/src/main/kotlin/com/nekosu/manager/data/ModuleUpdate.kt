@@ -107,7 +107,7 @@ object ModuleUpdate {
     suspend fun readProp(id: String): ModuleProp? {
         val result =
             runCatching { RootShell.exec("cat -- '/data/adb/modules/${quote(id)}/module.prop'") }
-                .onFailure { Log.w(TAG, "读取 module.prop 失败：${it.message}") }
+                .onFailure { Log.w(TAG, "read module.prop failed", it) }
                 .getOrNull() ?: return null
         if (result.exitCode != 0) return null
         return parseProp(result.output)

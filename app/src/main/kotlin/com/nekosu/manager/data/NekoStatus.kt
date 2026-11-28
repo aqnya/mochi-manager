@@ -94,7 +94,7 @@ object NekoStatusRepository {
             try {
                 withTimeout(PRELOAD_TIMEOUT_MS) { refresh(context) }
             } catch (e: TimeoutCancellationException) {
-                Log.w(TAG, "启动探测超时（${PRELOAD_TIMEOUT_MS}ms），按未安装呈现")
+                Log.w(TAG, "preload timed out timeout=${PRELOAD_TIMEOUT_MS}ms")
                 _state.value = NekoStatus(checked = true)
             }
         }
@@ -106,7 +106,7 @@ object NekoStatusRepository {
         val version =
             withContext(Dispatchers.IO) {
                 runCatching { NekoKernel.version() }
-                    .onFailure { Log.w(TAG, "读取内核版本失败：${it.message}") }
+                    .onFailure { Log.w(TAG, "read kernel version failed", it) }
                     .getOrNull()
             }
         val image = probeNcore()
@@ -120,7 +120,7 @@ object NekoStatusRepository {
                 moduleCount = modules,
                 checked = true,
             )
-        Log.i(TAG, "内核=${version ?: "不可用"} ncore=$image 模块=${modules ?: "未知"}")
+        Log.i(TAG, "refresh done kernel=${version ?: "unavailable"} ncore=$image modules=${modules ?: "unknown"}")
     }
 
     /**

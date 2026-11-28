@@ -19,18 +19,17 @@ object ModuleStore {
 
     suspend fun load(): List<ModuleEntry>? {
         // 不前置判断「ncore 是否部署过」：任何本地记录都只是历史，文件被删/被替换时会撒谎。
-        // 直接问 ncore，跑不起来就是 null。
         val result =
             runCatching { Ncore.moduleListJson() }
-                .onFailure { Log.w(TAG, "执行 ncore 失败：${it.message}") }
+                .onFailure { Log.w(TAG, "ncore exec failed", it) }
                 .getOrNull()
                 ?: return null
         if (result.exitCode != 0) {
-            Log.w(TAG, "module list 退出码 ${result.exitCode}：${result.output.take(200)}")
+            Log.w(TAG, "module list failed exit=${result.exitCode} out=${result.output.take(200)}")
             return null
         }
         return runCatching { parse(result.output) }
-            .onFailure { Log.w(TAG, "解析模块列表失败：${it.message}") }
+            .onFailure { Log.w(TAG, "parse module list failed", it) }
             .getOrNull()
     }
 

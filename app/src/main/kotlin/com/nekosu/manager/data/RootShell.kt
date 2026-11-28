@@ -13,7 +13,6 @@ import java.util.concurrent.TimeUnit
 
 private const val TAG = "NekoSU/Shell"
 
-/** 一次 shell 执行结果。 */
 data class RootShellResult(
     val exitCode: Int,
     val output: String,
@@ -134,7 +133,6 @@ object RootShell {
                 } catch (e: IOException) {
                     continue
                 }
-            // 已经退出且失败：su 存在但命令本身跑不起来，换下一个候选
             val exited = runCatching { process.exitValue() }.getOrNull()
             if (exited != null && exited != 0) {
                 process.destroy()
@@ -144,7 +142,7 @@ object RootShell {
                 try {
                     process.errorStream.use { it.readBytes() }
                 } catch (e: Throwable) {
-                    Log.w(TAG, "排空 stderr 失败：${e.message}")
+                    Log.w(TAG, "drain stderr failed", e)
                 }
             }, "nekosu-su-stderr").apply { isDaemon = true }.start()
             return process.inputStream
@@ -181,7 +179,7 @@ object RootShell {
                 } catch (e: IOException) {
                     throw RootUnavailableException("无法执行 ${argv.firstOrNull()}：${e.message}", e)
                 }
-            // 输出必须由独立线程一直读完：原来的 ready()+readLine() 在最后一行没有换行时会阻塞，
+            // 输出必须由独立线程一直读完：readLine() 在最后一行没有换行时会阻塞，
             // 超时循环进不去，脚本又不退出，界面就永远停在「正在收集日志」。
             val output = StringBuilder()
             val readerThread =
@@ -198,7 +196,7 @@ object RootShell {
                             }
                         }
                     } catch (e: Throwable) {
-                        Log.w(TAG, "读取输出失败", e)
+                        Log.w(TAG, "read output failed", e)
                     }
                 }, "nekosu-shell-reader").apply { isDaemon = true }
             readerThread.start()
@@ -208,12 +206,16 @@ object RootShell {
                 process.destroyForcibly()
                 readerThread.join(500)
                 val cmd = argv.joinToString(" ")
-                Log.w(TAG, "命令超时 ${timeoutSeconds}s: cmd=$cmd")
+                Log.w(TAG, "command timed out timeout=${timeoutSeconds}s cmd=${cmd.take(120)}")
                 throw ShellTimeoutException("命令超时（${timeoutSeconds}s）：${cmd.take(60)}")
             }
             readerThread.join(1_000)
             val result = RootShellResult(process.exitValue(), output.toString().trim())
-            Log.d(TAG, "命令结束 exit=${result.exitCode} 输出=${result.output.length} 字: ${argv.joinToString(" ").take(80)}")
+            Log.d(
+                TAG,
+                "command finished exit=${result.exitCode} outChars=${result.output.length} " +
+                    "cmd=${argv.joinToString(" ").take(120)}",
+            )
             result
         }
 
@@ -244,12 +246,12 @@ object RootShell {
                                     onLine(line)
                                 } catch (e: Throwable) {
                                     // 回调把界面搞崩了也不能影响读管道，否则进程会被写满阻塞
-                                    Log.w(TAG, "行回调异常", e)
+                                    Log.w(TAG, "line callback failed", e)
                                 }
                             }
                         }
                     } catch (e: Throwable) {
-                        Log.w(TAG, "读取输出失败", e)
+                        Log.w(TAG, "read output failed", e)
                     }
                 }, "nekosu-shell-stream").apply { isDaemon = true }
             readerThread.start()
@@ -257,7 +259,7 @@ object RootShell {
             try {
                 onStart(StreamingShell(process))
             } catch (e: Throwable) {
-                Log.w(TAG, "onStart 回调异常", e)
+                Log.w(TAG, "start callback failed", e)
             }
 
             val deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(timeoutSeconds)
@@ -298,7 +300,7 @@ class StreamingShell internal constructor(
             stream.flush()
             true
         } catch (e: IOException) {
-            Log.w(TAG, "写入 stdin 失败：${e.message}")
+            Log.w(TAG, "write stdin failed", e)
             false
         }
 }

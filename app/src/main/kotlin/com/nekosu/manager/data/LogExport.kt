@@ -5,9 +5,9 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import android.util.Log
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -59,7 +59,7 @@ object LogExport {
         val uri =
             resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                 ?: throw IOException("无法在下载目录创建文件（MediaStore.insert 返回 null）")
-        Log.d(TAG, "MediaStore 占位记录 uri=$uri 源文件=${file.length()} 字节")
+        Log.d(TAG, "MediaStore insert uri=$uri srcBytes=${file.length()}")
         try {
             val written =
                 resolver.openOutputStream(uri)?.use { out ->
@@ -70,9 +70,9 @@ object LogExport {
             }
             val cleared =
                 resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
-            Log.d(TAG, "写入完成 $written 字节，清除 IS_PENDING 影响=$cleared uri=$uri")
+            Log.d(TAG, "write done bytes=$written cleared=$cleared uri=$uri")
         } catch (e: Throwable) {
-            Log.e(TAG, "写入下载目录失败 uri=$uri", e)
+            Log.e(TAG, "write to downloads failed uri=$uri", e)
             // 写了一半就失败：删掉占位记录，别在「下载」里留个 0 字节文件
             runCatching { resolver.delete(uri, null, null) }
             throw e

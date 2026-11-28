@@ -69,7 +69,6 @@ fun MochiRoot() {
 
     MochiNavHost(navigator = navigator) { route ->
         when (route) {
-            // —— 二级页 ——
             RouteAppProfile -> {
                 val group = openedGroup
                 if (group == null) {
@@ -113,7 +112,6 @@ fun MochiRoot() {
 
             RouteTheme -> ThemeScreen(onBack = { navigator.pop() })
 
-            // —— 根页：四个标签 ——
             else ->
                 MainTabs(
                     moduleReloadKey = moduleReloadKey,

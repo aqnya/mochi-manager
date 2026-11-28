@@ -41,22 +41,21 @@ object NekoKernel {
                 Profile(uid, caps, ns, parts[3])
             }
             .toList()
-            .also { Log.d(TAG, "profile 表 ${it.size} 条") }
+            .also { Log.d(TAG, "profiles count=${it.size}") }
     }
 
     fun isAllowed(uid: Int): Boolean? = NekoNative.hasUid(uid)
 
     /**
-     * 授权/取消授权。取消时内核表项与落盘条目一起清（JNI 里完成）；
-     * 返回是否成功——false 说明落盘没删掉，重启后可能又变回已授权。
+     * 授权/取消授权。取消时内核表项与落盘条目一起清（JNI 里完成）。
+     *
+     * 返回 false：授权时是内核表项没写进去，撤销时是落盘条目没删掉，重启后状态可能回退。
      */
     fun setAllowed(
         uid: Int,
         allow: Boolean,
     ): Boolean {
-        val ok = if (allow) NekoNative.addUid(uid) else NekoNative.delUid(uid)
-        if (!ok) Log.w(TAG, "写入内核授权状态失败 uid=$uid allow=$allow")
-        return ok
+        return if (allow) NekoNative.addUid(uid) else NekoNative.delUid(uid)
     }
 
     /**
@@ -70,9 +69,7 @@ object NekoKernel {
         namespace: Int,
         rootUid: Int,
     ): Boolean {
-        val ok = NekoNative.setProfile(uid, caps, domain, namespace, rootUid)
-        if (!ok) Log.w(TAG, "写入内核 profile / 落盘失败 uid=$uid")
-        return ok
+        return NekoNative.setProfile(uid, caps, domain, namespace, rootUid)
     }
 
     /** 内核特性表（`<id> <name> <value>`），用于关于页/诊断。 */

@@ -16,6 +16,8 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 
+private const val TAG = "NekoSU/SuProfile"
+
 /**
  * 一个 uid（而不是一个包）的超级用户配置，字段对齐 KernelSU 的 AppProfile：
  * 是否放行、以什么身份运行（uid/gid/附加组）、能力位、命名空间、SELinux 域、是否卸载模块。
@@ -182,7 +184,6 @@ fun capsFromMask(mask: Long): Set<String> =
  * 这样共享 uid 的应用不必各自保存一份、也不会出现组内状态不一致。
  */
 object SuProfileStore {
-    private const val TAG = "NekoSU/SuProfile"
     private const val PREFS = "neko_su_profiles"
     private const val KEY_PROFILES = "profiles"
 
@@ -440,14 +441,12 @@ internal fun applyKernel(
 ) {
     val uid = profile.appUid
     if (profile.allowSu) {
-        if (!kernel.setAllowed(uid, true)) Log.w("NekoSU/SuProfile", "写入内核授权失败 uid=$uid")
+        if (!kernel.setAllowed(uid, true)) Log.w(TAG, "set allowed failed uid=$uid allow=true")
         val caps = capsMask(profile.capabilities)
         if (!kernel.setProfile(uid, caps, profile.context, profile.namespace, profile.runAsUid)) {
-            Log.w("NekoSU/SuProfile", "写入内核 profile / 落盘失败 uid=$uid，重启后可能丢失")
+            Log.w(TAG, "persist profile failed uid=$uid")
         }
         return
     }
-    if (!kernel.setAllowed(uid, false)) {
-        Log.w("NekoSU/SuProfile", "撤销失败 uid=$uid，重启后可能仍是已授权状态")
-    }
+    if (!kernel.setAllowed(uid, false)) Log.w(TAG, "revoke failed uid=$uid")
 }

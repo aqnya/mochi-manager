@@ -17,7 +17,7 @@ import java.net.URL
 import java.security.MessageDigest
 import kotlin.coroutines.coroutineContext
 
-private const val LOG_TAG = "NekoSU/Module"
+private const val TAG = "NekoSU/ModuleRepo"
 
 /** 缓存目录里的一份文本，键直接当文件名用（都由 [RegistryClient] 生成，安全）。 */
 class FileRegistryCache(
@@ -214,7 +214,7 @@ object ModuleInstaller {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            Log.w(LOG_TAG, "判断是否需要重启失败：${e.message}")
+            Log.w(TAG, "reboot probe failed", e)
             true
         }
     }
@@ -268,7 +268,7 @@ object ModuleInstaller {
             if (result.exitCode == 0) {
                 InstallOutcome.Success("安装完成")
             } else {
-                Log.w(LOG_TAG, "ncore 安装失败 exit=${result.exitCode}")
+                Log.w(TAG, "ncore install failed exit=${result.exitCode}")
                 InstallOutcome.Failure("安装失败（退出码 ${result.exitCode}）", result.output)
             }
         }
