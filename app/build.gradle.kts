@@ -12,7 +12,10 @@ android {
     ndkVersion = "27.2.12479018"
     defaultConfig {
         applicationId = "com.nekosu.manager"
-        minSdk = 24
+        // 支持下限提到 Android 12（API 31）。ncore 的属性直写依赖 bionic 的
+        // property area writer 协议，12 之前各版本布局/序列号语义有差异；
+        // 模块生态（KernelSU / APatch 的内核分支持续收窄）也基本只覆盖 12+。
+        minSdk = 31
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"

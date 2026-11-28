@@ -3,9 +3,7 @@
 // （NekoSU 仓库的独立 prop 工具），只做了三处改动：
 //   1. 去掉 main()，改成 ncore::prop::{read,write,list} 三个入口；
 //   2. SetProperty 多一个 force_direct 参数，用来实现 resetprop -n；
-//   3. PROP_DIRNAME 自己兜底（NDK 的 <sys/system_properties.h> 不带它）；
-//   4. __system_property_read_callback 改成 weak 声明 + 短值回退，因为
-//      minSdk 24 的头文件和 stub 里都没有这个 API 26 的符号。
+//   3. PROP_DIRNAME 自己兜底（NDK 的 <sys/system_properties.h> 不带它）。
 //
 // 实现要点（原作者的注释保留了）：bionic 只给 init 一个可写的 property area
 // 映射，__system_property_set() 也就没法改第二次 "ro." 属性。所以这里自己
@@ -38,14 +36,6 @@
 #ifndef PROP_DIRNAME
 #	define PROP_DIRNAME "/dev/__properties__"
 #endif
-
-// minSdk 是 24，sys/system_properties.h 要到 26 才声明这个函数，24 的 stub
-// 里也没有这个符号。用 weak 声明：Android 8+ 上正常绑定（长值靠它读），
-// 更老的设备解析不到地址就退化成 __system_property_read()（只读短值）。
-extern "C" void __system_property_read_callback(
-	const prop_info *pi,
-	void (*callback)(void *cookie, const char *name, const char *value, uint32_t serial),
-	void *cookie) __attribute__((weak));
 
 namespace ncore::prop
 {
@@ -196,18 +186,12 @@ bool ReadPropertyValue(const std::string &name, std::string *value)
 	}
 
 	std::string result;
-	if (__system_property_read_callback != nullptr) {
-		__system_property_read_callback(
-			info,
-			[](void *cookie, const char *, const char *propValue, uint32_t) {
-				*static_cast<std::string *>(cookie) = propValue;
-			},
-			&result);
-	} else {
-		char buffer[PROP_VALUE_MAX] = {};
-		__system_property_read(info, nullptr, buffer);
-		result = buffer;
-	}
+	__system_property_read_callback(
+		info,
+		[](void *cookie, const char *, const char *propValue, uint32_t) {
+			*static_cast<std::string *>(cookie) = propValue;
+		},
+		&result);
 	*value = std::move(result);
 	return true;
 }
@@ -219,22 +203,15 @@ void ShowAllProperties()
 		[](const prop_info *info, void *cookie) {
 			auto properties = reinterpret_cast<
 				std::vector<std::pair<std::string, std::string>> *>(cookie);
-			if (__system_property_read_callback != nullptr) {
-				__system_property_read_callback(
-					info,
-					[](void *cookie, const char *name, const char *value, uint32_t) {
-						auto properties = reinterpret_cast<
-							std::vector<std::pair<std::string, std::string>> *>(
-							cookie);
-						properties->emplace_back(name, value);
-					},
-					cookie);
-			} else {
-				char name[128] = {};
-				char value[PROP_VALUE_MAX] = {};
-				__system_property_read(info, name, value);
-				properties->emplace_back(name, value);
-			}
+			__system_property_read_callback(
+				info,
+				[](void *cookie, const char *name, const char *value, uint32_t) {
+					auto properties = reinterpret_cast<
+						std::vector<std::pair<std::string, std::string>> *>(
+						cookie);
+					properties->emplace_back(name, value);
+				},
+				cookie);
 		},
 		&properties);
 

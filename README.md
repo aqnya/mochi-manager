@@ -183,7 +183,7 @@ ncore 的 boot 阶段，用编译期指纹，和上面的镜像验签是两回�
 
 ## 说明
 
-- 包名 `com.nekosu.manager`，应用名 `NekoSU`，minSdk 24 / targetSdk 37。
+- 包名 `com.nekosu.manager`，应用名 `NekoSU`，minSdk 31（Android 12）/ targetSdk 37。
 - 超级用户页的应用列表来自真实 PackageManager（见 data/InstalledApps.kt）；
   授权是本地 SharedPreferences 记录，没有写进 KernelSU 白名单。
 - 首页设备信息为真实采集（见下文）；模块列表来自 `/data/adb/modules`，启停/卸载写回磁盘，设置页开关只改本地状态。
