@@ -12,9 +12,14 @@ import java.io.File
  * post-fs-data 执行它时自动挂上控制 fd；ncore 自己在 boot 阶段扫描管理器包并把 uid
  * 交给内核（`IOC_SET_MANAGER_UID`）。
  *
- * 所以管理器这边不复制镜像、不跑 `ncore install`、也不做 `manager scan`——这些都由
- * 内核态负责，重复做只会和内核抢同一份状态。这里只负责以 root 调用已就位的 ncore CLI：
- * 模块安装、启停、卸载、执行 action 全部转给它，管理器不再自己解包 ZIP，也不依赖 ksud。
+ * 所以日常命令这边不复制镜像、也不做 `manager scan`——内核态已经做完，重复做只会和
+ * 内核抢同一份状态。这里只负责以 root 调用已就位的 ncore CLI：模块安装、启停、卸载、
+ * 执行 action 全部转给它，管理器不再自己解包 ZIP，也不依赖 ksud。
+ *
+ * 唯一的例外是换代：APK 升级后内嵌的 ncore 版本变了，内核 boot 引导只装二进制、
+ * 不补 assets。管理器会在每次打开时比对版本（见 [com.nekosu.manager.data.installer.NcoreBoot]），
+ * 变化时以 root 跑一次 APK 自带 `libncore.so install` 把用户态组件更新到位。那是引导链路，
+ * 不走这里的 [BOOT_PATH] 日常 CLI 调用。
  */
 object Ncore {
     /** 内核引导 ncore 时使用的固定路径。 */
