@@ -36,6 +36,7 @@ import ui.feice.mochi.basic.MochiButton
 import ui.feice.mochi.basic.MochiButtonStyle
 import ui.feice.mochi.basic.MochiEmptyState
 import ui.feice.mochi.basic.MochiItem
+import com.nekosu.manager.ui.rememberHideKeyboardOnSearch
 import ui.feice.mochi.basic.MochiSearchBar
 import ui.feice.mochi.basic.Text
 import ui.feice.mochi.icons.MochiIonicon
@@ -107,6 +108,7 @@ fun ModuleRepoScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableStateOf(RepoSort.UPDATED) }
     var menu by remember { mutableStateOf(false) }
+    val hideKeyboard = rememberHideKeyboardOnSearch()
 
     suspend fun load() {
         loading = true
@@ -155,8 +157,12 @@ fun ModuleRepoScreen(
             MochiSearchBar(
                 query = query,
                 onQueryChange = { query = it },
+                onSearch = { hideKeyboard() },
                 placeholder = stringResource(R.string.repo_search),
-                onCancel = { query = "" },
+                onCancel = {
+                    query = ""
+                    hideKeyboard()
+                },
             )
         },
         // onRefresh 必须自己完成加载再返回，否则指示器会一直转（库的刷新态由它复位）

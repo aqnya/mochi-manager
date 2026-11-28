@@ -64,6 +64,7 @@ import ui.feice.mochi.basic.MochiDialogAction
 import ui.feice.mochi.basic.MochiDialogActionRole
 import ui.feice.mochi.basic.MochiEmptyState
 import ui.feice.mochi.basic.MochiItem
+import com.nekosu.manager.ui.rememberHideKeyboardOnSearch
 import ui.feice.mochi.basic.MochiSearchBar
 import ui.feice.mochi.basic.MochiSwitch
 import ui.feice.mochi.basic.Text
@@ -97,6 +98,7 @@ fun ModuleScreen(
     var actionFirst by rememberSaveable { mutableStateOf(false) }
     var enabledFirst by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    val hideKeyboard = rememberHideKeyboardOnSearch()
 
     // 模块更新：列表载入后逐个检查 updateJson，确认有新版才亮出更新按钮；
     // 点击 → 确认 → 下载 → 交给安装输出页
@@ -291,8 +293,12 @@ fun ModuleScreen(
             MochiSearchBar(
                 query = query,
                 onQueryChange = { query = it },
+                onSearch = { hideKeyboard() },
                 placeholder = stringResource(R.string.mochi_search_modules),
-                onCancel = { query = "" },
+                onCancel = {
+                    query = ""
+                    hideKeyboard()
+                },
             )
         },
         // 加载要在 onRefresh 里跑完再返回，库才会复位刷新指示器

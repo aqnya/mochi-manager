@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -18,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -28,6 +30,7 @@ import com.nekosu.manager.data.SuCapabilityCategories
 import com.nekosu.manager.data.SuGroups
 import com.nekosu.manager.data.SuProfile
 import com.nekosu.manager.data.isValidSelinuxContext
+import com.nekosu.manager.ui.rememberHideKeyboardOnSearch
 import com.nekosu.manager.data.SuProfileStore
 import com.nekosu.manager.ui.mochi.AppIcon
 import com.nekosu.manager.ui.mochi.KsuTile
@@ -388,6 +391,7 @@ private fun CapabilitySelectRow(
     var open by remember { mutableStateOf(false) }
     var draft by remember(selected) { mutableStateOf(selected) }
     var query by remember { mutableStateOf("") }
+    val hideKeyboard = rememberHideKeyboardOnSearch()
     MochiListRow(title, subtitle = summary, chevron = true, onClick = { open = true })
     MochiDialog(
         visible = open,
@@ -416,6 +420,8 @@ private fun CapabilitySelectRow(
             onValueChange = { query = it },
             placeholder = stringResource(R.string.profile_capabilities_search),
             singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { hideKeyboard() }),
             modifier = Modifier.fillMaxWidth(),
         )
         Row(
