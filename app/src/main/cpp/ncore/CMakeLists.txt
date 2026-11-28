@@ -85,6 +85,7 @@ set(NCORE_SOURCES
     src/unzip.cpp
     src/properties.cpp
     src/prop_area.cpp
+    src/persist_prop.cpp
     src/json.cpp
     src/config.cpp
     src/metamodule.cpp

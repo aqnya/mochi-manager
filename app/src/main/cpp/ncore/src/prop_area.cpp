@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
@@ -173,6 +174,21 @@ bool IsPropertyAreaFile(const std::string &path)
 	return path.size() > prefixLength && path.compare(0, prefixLength, kPropertyAreaDir) == 0;
 }
 
+// /dev/__properties__/<context> 的文件名就是 SELinux context。被删除的映射
+// 在内核里会显示成 "<path> (deleted)"，先把这个后缀剥掉。
+std::string AreaBaseName(const std::string &path)
+{
+	constexpr char kDeletedSuffix[] = " (deleted)";
+	std::string trimmed = path;
+	if (trimmed.size() > sizeof(kDeletedSuffix) - 1 &&
+	    trimmed.compare(trimmed.size() - (sizeof(kDeletedSuffix) - 1),
+			    sizeof(kDeletedSuffix) - 1, kDeletedSuffix) == 0) {
+		trimmed.resize(trimmed.size() - (sizeof(kDeletedSuffix) - 1));
+	}
+	size_t slash = trimmed.find_last_of('/');
+	return slash == std::string::npos ? trimmed : trimmed.substr(slash + 1);
+}
+
 // ---------------------------------------------------------------------------
 // Read-only property access through bionic.  These are public NDK APIs and
 // always observe the shared memory, even the areas we modify ourselves.
@@ -194,32 +210,6 @@ bool ReadPropertyValue(const std::string &name, std::string *value)
 		&result);
 	*value = std::move(result);
 	return true;
-}
-
-void ShowAllProperties()
-{
-	std::vector<std::pair<std::string, std::string>> properties;
-	__system_property_foreach(
-		[](const prop_info *info, void *cookie) {
-			auto properties = reinterpret_cast<
-				std::vector<std::pair<std::string, std::string>> *>(cookie);
-			__system_property_read_callback(
-				info,
-				[](void *cookie, const char *name, const char *value, uint32_t) {
-					auto properties = reinterpret_cast<
-						std::vector<std::pair<std::string, std::string>> *>(
-						cookie);
-					properties->emplace_back(name, value);
-				},
-				cookie);
-		},
-		&properties);
-
-	std::sort(properties.begin(), properties.end());
-
-	for (const auto &[name, value] : properties) {
-		std::cout << "[" << name << "]: [" << value << "]" << std::endl;
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +299,82 @@ const Mapping *FindNewPropertyArea(const std::vector<Mapping> &before,
 		}
 	}
 	return nullptr;
+}
+
+struct ListEntry {
+	std::string name;
+	std::string value;
+	std::string context;
+};
+
+struct ListState {
+	std::vector<ListEntry> entries;
+	const std::vector<Mapping> *maps = nullptr;
+};
+
+void CollectListEntry(const prop_info *info, void *cookie)
+{
+	auto *state = static_cast<ListState *>(cookie);
+	ListEntry entry;
+	__system_property_read_callback(
+		info,
+		[](void *cookie, const char *name, const char *value, uint32_t) {
+			auto *entry = static_cast<ListEntry *>(cookie);
+			entry->name = name;
+			entry->value = value;
+		},
+		&entry);
+	if (entry.name.empty()) {
+		return;
+	}
+	if (state->maps != nullptr) {
+		const Mapping *mapping = FindMapping(*state->maps, info);
+		if (mapping != nullptr) {
+			entry.context = AreaBaseName(mapping->path);
+		}
+	}
+	state->entries.push_back(std::move(entry));
+}
+
+bool SnapshotAll(std::map<std::string, std::string> *out, std::string *error)
+{
+	(void)error;
+	__system_property_foreach(
+		[](const prop_info *info, void *cookie) {
+			auto *out = static_cast<std::map<std::string, std::string> *>(cookie);
+			__system_property_read_callback(
+				info,
+				[](void *cookie, const char *name, const char *propValue, uint32_t) {
+					auto *out =
+						static_cast<std::map<std::string, std::string> *>(cookie);
+					out->insert_or_assign(name, propValue);
+				},
+				out);
+		},
+		out);
+	return true;
+}
+
+void ShowAllProperties(bool withContext)
+{
+	ListState state;
+	std::vector<Mapping> maps;
+	if (withContext) {
+		ParseSelfMaps(maps);
+		state.maps = &maps;
+	}
+
+	__system_property_foreach(CollectListEntry, &state);
+	std::sort(state.entries.begin(), state.entries.end(),
+		  [](const ListEntry &one, const ListEntry &two) { return one.name < two.name; });
+
+	for (const auto &entry : state.entries) {
+		if (withContext) {
+			std::cout << "[" << entry.name << "]: [" << entry.context << "]" << std::endl;
+		} else {
+			std::cout << "[" << entry.name << "]: [" << entry.value << "]" << std::endl;
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -743,6 +809,9 @@ bool InsertPropInfo(uint8_t *area, size_t areaSize, const std::string &name,
 // Command line operations.
 // ---------------------------------------------------------------------------
 
+// 定义在文件末尾的删除/紧凑一节，SetProperty 需要提前用到。
+bool ResolveContextPath(const std::string &name, std::string *path);
+
 bool IsValidPropertyName(const std::string &name, std::string *error)
 {
 	// Same rules as init's IsLegalPropertyName() (system/core/init/util.cpp).
@@ -830,10 +899,10 @@ bool SetProperty(const std::string &name, const std::string &value, bool forceDi
 		return false;
 	}
 
-	const Mapping *areaMapping = nullptr;
+	std::string areaPath;
 	uint32_t dataOffset = 0;
 	if (info != nullptr) {
-		areaMapping = FindMapping(mapsAfter, info);
+		const Mapping *areaMapping = FindMapping(mapsAfter, info);
 		if (areaMapping == nullptr || !IsPropertyAreaFile(areaMapping->path) ||
 		    areaMapping->offset != 0) {
 			*error = "cannot locate the property area backing \"" + name + "\"";
@@ -844,23 +913,23 @@ bool SetProperty(const std::string &name, const std::string &value, bool forceDi
 			*error = "property area mapping is inconsistent";
 			return false;
 		}
+		areaPath = areaMapping->path;
 		dataOffset = static_cast<uint32_t>(infoAddress - areaMapping->start -
 						   kPropertyAreaHeaderSize);
-	} else {
-		areaMapping = FindNewPropertyArea(mapsBefore, mapsAfter);
-		if (areaMapping == nullptr) {
+	} else if (!ResolveContextPath(name, &areaPath)) {
+		// 没有可用的 property_info（很老的设备）时，退回到"find 触发了懒映射"
+		// 的推断：bionic 第一次访问某个 context 时才会新 mmap 它的文件。
+		const Mapping *areaMapping = FindNewPropertyArea(mapsBefore, mapsAfter);
+		if (areaMapping == nullptr || areaMapping->offset != 0) {
 			*error = "cannot resolve the property area for \"" + name +
 				 "\" (unknown property context)";
 			return false;
 		}
-	}
-	if (areaMapping->offset != 0) {
-		*error = "unexpected property area mapping offset";
-		return false;
+		areaPath = areaMapping->path;
 	}
 
 	WritableMapping area;
-	if (!area.Open(areaMapping->path, error) ||
+	if (!area.Open(areaPath, error) ||
 	    !ValidatePropertyArea(area.Data(), area.Size(), error)) {
 		return false;
 	}
@@ -898,6 +967,547 @@ bool SetProperty(const std::string &name, const std::string &value, bool forceDi
 	return true;
 }
 
+// ---------------------------------------------------------------------------
+// Deletion and compaction.
+// ---------------------------------------------------------------------------
+
+// Walk the trie down to the node that owns this exact property name.  This is
+// the read-only counterpart of the traversal in InsertPropInfo().
+bool FindPropertyNode(uint8_t *area, size_t dataSize, const std::string &name, uint32_t *result,
+		      std::string *error)
+{
+	uint32_t current = 0;
+	const char *remaining = name.data();
+	size_t remainingLength = name.size();
+	for (;;) {
+		size_t partLength = remainingLength;
+		bool wantSubtree = false;
+		for (size_t i = 0; i < remainingLength; ++i) {
+			if (remaining[i] == '.') {
+				partLength = i;
+				wantSubtree = true;
+				break;
+			}
+		}
+		if (partLength == 0) {
+			*error = "invalid property name";
+			return false;
+		}
+
+		uint32_t children = LoadTriePointer(area, current, kTrieNodeChildrenOffset);
+		if (children == 0) {
+			*error = "property \"" + name + "\" does not exist";
+			return false;
+		}
+
+		uint32_t node = 0;
+		if (!FindTrieNode(area, dataSize, children, remaining, partLength, false, &node,
+				  error)) {
+			return false;
+		}
+		if (!wantSubtree) {
+			*result = node;
+			return true;
+		}
+		current = node;
+		remaining += partLength + 1;
+		remainingLength -= partLength + 1;
+	}
+}
+
+// Read a prop_info straight from the raw area, without going through bionic.
+// Used by the compaction walk, which has to see properties bionic may have
+// already forgotten about (stale records left behind by updates).
+bool ReadPropInfoAt(const uint8_t *area, size_t dataSize, uint32_t propOffset, std::string *name,
+		    std::string *value, std::string *error)
+{
+	if (!CheckedRange(propOffset, kPropInfoHeaderSize + 1, dataSize)) {
+		*error = "corrupted property area (prop_info offset out of range)";
+		return false;
+	}
+
+	const uint8_t *prop = area + kPropertyAreaHeaderSize + propOffset;
+	const char *propName = reinterpret_cast<const char *>(prop + kPropInfoHeaderSize);
+	size_t nameLimit = dataSize - propOffset - kPropInfoHeaderSize;
+	size_t nameLength = strnlen(propName, nameLimit);
+	if (nameLength == 0 || nameLength == nameLimit) {
+		*error = "corrupted property area (unterminated property name)";
+		return false;
+	}
+
+	uint32_t serial = LoadU32(prop);
+	std::string result;
+	if ((serial & kLongFlag) != 0) {
+		uint32_t relative = LoadU32(prop + kPropInfoLongOffsetOffset);
+		if (relative < kPropInfoHeaderSize + nameLength + 1 ||
+		    propOffset > dataSize - relative) {
+			*error = "corrupted property area (long value offset out of range)";
+			return false;
+		}
+		size_t longOffset = static_cast<size_t>(propOffset) + relative;
+		const char *longValue = reinterpret_cast<const char *>(
+			area + kPropertyAreaHeaderSize + longOffset);
+		size_t limit = dataSize - longOffset;
+		size_t length = strnlen(longValue, limit);
+		if (length == limit) {
+			*error = "corrupted property area (unterminated long value)";
+			return false;
+		}
+		result.assign(longValue, length);
+	} else {
+		size_t declared = serial >> 24;
+		if (declared >= PROP_VALUE_MAX) {
+			declared = PROP_VALUE_MAX - 1;
+		}
+		const char *inlineValue = reinterpret_cast<const char *>(prop + kPropInfoValueOffset);
+		result.assign(inlineValue, strnlen(inlineValue, declared));
+	}
+
+	name->assign(propName, nameLength);
+	*value = std::move(result);
+	return true;
+}
+
+// property_info 是 bionic 的 context 索引：同样是一个 prop_area，trie 每个
+// 节点对应一个属性名前缀，prop_info 的 value 是 "<context>:<type>"（type 为
+// exact / prefix / default）。按 '.' 分段做最长前缀匹配，就能确定一个属性
+// 该落在哪个 area 文件里。
+//
+// 这条路径比"调用 find 后看 maps 多了哪个映射"可靠：bionic 对已经加载过的
+// context 不会再 mmap 一次，而一个进程里写第二个同 context 的新属性很常见。
+bool ResolveContextPath(const std::string &name, std::string *path)
+{
+	std::ifstream file(std::string(kPropertyAreaDir) + "property_info", std::ios::binary);
+	if (!file) {
+		return false;
+	}
+	std::string buffer{std::istreambuf_iterator<char>(file),
+			   std::istreambuf_iterator<char>()};
+	if (buffer.size() <= kPropertyAreaHeaderSize + kTrieNodeHeaderSize) {
+		return false;
+	}
+
+	const uint8_t *area = reinterpret_cast<const uint8_t *>(buffer.data());
+	if (LoadU32(area + kPropertyAreaMagicOffset) != kPropertyAreaMagic ||
+	    LoadU32(area + kPropertyAreaVersionOffset) != kPropertyAreaVersion) {
+		return false;
+	}
+	size_t dataSize = buffer.size() - kPropertyAreaHeaderSize;
+
+	uint32_t current = 0;
+	uint32_t bestProp = LoadTriePointer(area, 0, kTrieNodePropOffset);
+	const char *remaining = name.data();
+	size_t remainingLength = name.size();
+
+	for (;;) {
+		uint32_t children = LoadTriePointer(area, current, kTrieNodeChildrenOffset);
+		if (children == 0) {
+			break;
+		}
+		size_t partLength = remainingLength;
+		bool wantSubtree = false;
+		for (size_t i = 0; i < remainingLength; ++i) {
+			if (remaining[i] == '.') {
+				partLength = i;
+				wantSubtree = true;
+				break;
+			}
+		}
+		if (partLength == 0) {
+			break;
+		}
+
+		uint32_t node = children;
+		bool found = false;
+		for (int guard = 0; node != 0 && guard < 10000; ++guard) {
+			if (!CheckedRange(node, kTrieNodeHeaderSize, dataSize)) {
+				return false;
+			}
+			const uint8_t *raw = area + kPropertyAreaHeaderSize + node;
+			uint32_t nameLength = LoadU32(raw);
+			if (!CheckedRange(node + kTrieNodeHeaderSize, nameLength, dataSize)) {
+				return false;
+			}
+			const char *nodeName =
+				reinterpret_cast<const char *>(raw + kTrieNodeHeaderSize);
+			if (CompareNamePart(remaining, partLength, nodeName, nameLength) == 0) {
+				found = true;
+				break;
+			}
+			size_t field = CompareNamePart(remaining, partLength, nodeName, nameLength) < 0
+					       ? kTrieNodeLeftOffset
+					       : kTrieNodeRightOffset;
+			node = LoadTriePointer(area, node, field);
+		}
+		if (!found) {
+			break;
+		}
+
+		current = node;
+		uint32_t prop = LoadTriePointer(area, current, kTrieNodePropOffset);
+		if (prop != 0) {
+			bestProp = prop;
+		}
+		if (!wantSubtree) {
+			break;
+		}
+		remaining += partLength + 1;
+		remainingLength -= partLength + 1;
+	}
+
+	if (bestProp == 0) {
+		return false;
+	}
+
+	std::string matchedName;
+	std::string value;
+	std::string error;
+	if (!ReadPropInfoAt(area, dataSize, bestProp, &matchedName, &value, &error)) {
+		return false;
+	}
+	size_t lastColon = value.find_last_of(':');
+	if (lastColon != std::string::npos) {
+		std::string suffix = value.substr(lastColon + 1);
+		if (suffix == "exact" || suffix == "prefix" || suffix == "default") {
+			value.resize(lastColon);
+		}
+	}
+	*path = std::string(kPropertyAreaDir) + value;
+	return true;
+}
+
+// Depth-first walk over one trie level.  budget guards against crafted areas
+// with cyclic or absurdly deep node graphs.
+bool WalkTrie(const uint8_t *area, size_t dataSize, uint32_t nodeOffset,
+	      std::vector<std::pair<std::string, std::string>> *entries, size_t *budget,
+	      std::string *error)
+{
+	if (nodeOffset == 0) {
+		return true;
+	}
+	if (*budget == 0) {
+		*error = "corrupted property trie (cyclic or too deep)";
+		return false;
+	}
+	--*budget;
+
+	if (!CheckedRange(nodeOffset, kTrieNodeHeaderSize, dataSize)) {
+		*error = "corrupted property trie (node offset out of range)";
+		return false;
+	}
+	const uint8_t *node = area + kPropertyAreaHeaderSize + nodeOffset;
+	uint32_t nameLength = LoadU32(node);
+	if (!CheckedRange(nodeOffset + kTrieNodeHeaderSize, nameLength, dataSize)) {
+		*error = "corrupted property trie (node name out of range)";
+		return false;
+	}
+
+	uint32_t propOffset = LoadU32(node + kTrieNodePropOffset);
+	uint32_t left = LoadTriePointer(area, nodeOffset, kTrieNodeLeftOffset);
+	uint32_t right = LoadTriePointer(area, nodeOffset, kTrieNodeRightOffset);
+	uint32_t children = LoadTriePointer(area, nodeOffset, kTrieNodeChildrenOffset);
+
+	if (!WalkTrie(area, dataSize, left, entries, budget, error)) {
+		return false;
+	}
+	if (propOffset != 0) {
+		std::string name;
+		std::string value;
+		if (!ReadPropInfoAt(area, dataSize, propOffset, &name, &value, error)) {
+			return false;
+		}
+		entries->emplace_back(std::move(name), std::move(value));
+	}
+	if (!WalkTrie(area, dataSize, right, entries, budget, error)) {
+		return false;
+	}
+	return WalkTrie(area, dataSize, children, entries, budget, error);
+}
+
+// Drop trie nodes that no longer hold a property or children.  Returns whether
+// the whole subtree rooted at nodeOffset became empty, so the parent can clear
+// the pointer to it.
+bool PruneSubtree(uint8_t *area, size_t dataSize, uint32_t nodeOffset, size_t *budget,
+		  bool *empty)
+{
+	*empty = true;
+	if (nodeOffset == 0) {
+		return true;
+	}
+	if (*budget == 0 || !CheckedRange(nodeOffset, kTrieNodeHeaderSize, dataSize)) {
+		// Bail out conservatively: keep the node so nothing is lost.
+		*empty = false;
+		return false;
+	}
+	--*budget;
+
+	uint32_t prop = LoadU32(area + kPropertyAreaHeaderSize + nodeOffset + kTrieNodePropOffset);
+
+	bool leftEmpty = true;
+	bool rightEmpty = true;
+	bool childrenEmpty = true;
+	PruneSubtree(area, dataSize, LoadTriePointer(area, nodeOffset, kTrieNodeLeftOffset), budget,
+		     &leftEmpty);
+	PruneSubtree(area, dataSize, LoadTriePointer(area, nodeOffset, kTrieNodeRightOffset), budget,
+		     &rightEmpty);
+	PruneSubtree(area, dataSize, LoadTriePointer(area, nodeOffset, kTrieNodeChildrenOffset),
+		     budget, &childrenEmpty);
+
+	if (leftEmpty) {
+		StoreTriePointer(area, nodeOffset, kTrieNodeLeftOffset, 0);
+	}
+	if (rightEmpty) {
+		StoreTriePointer(area, nodeOffset, kTrieNodeRightOffset, 0);
+	}
+	if (childrenEmpty) {
+		StoreTriePointer(area, nodeOffset, kTrieNodeChildrenOffset, 0);
+	}
+
+	*empty = prop == 0 && leftEmpty && rightEmpty && childrenEmpty;
+	return true;
+}
+
+bool RemoveProperty(const std::string &name, bool prune, std::string *error)
+{
+	if (!IsValidPropertyName(name, error)) {
+		return false;
+	}
+
+	const prop_info *info = __system_property_find(name.c_str());
+	if (info == nullptr) {
+		*error = "property \"" + name + "\" does not exist";
+		return false;
+	}
+
+	std::vector<Mapping> maps;
+	if (!ParseSelfMaps(maps)) {
+		*error = "cannot read /proc/self/maps";
+		return false;
+	}
+	const Mapping *mapping = FindMapping(maps, info);
+	if (mapping == nullptr || !IsPropertyAreaFile(mapping->path) || mapping->offset != 0) {
+		*error = "cannot locate the property area backing \"" + name + "\"";
+		return false;
+	}
+
+	WritableMapping area;
+	if (!area.Open(mapping->path, error) ||
+	    !ValidatePropertyArea(area.Data(), area.Size(), error)) {
+		return false;
+	}
+	size_t dataSize = area.Size() - kPropertyAreaHeaderSize;
+
+	uint32_t node = 0;
+	if (!FindPropertyNode(area.Data(), dataSize, name, &node, error)) {
+		return false;
+	}
+	uint32_t propOffset = LoadTriePointer(area.Data(), node, kTrieNodePropOffset);
+	if (propOffset == 0) {
+		*error = "property \"" + name + "\" is not published";
+		return false;
+	}
+
+	WritableMapping serialArea;
+	if (!serialArea.Open(SerialAreaPath(), error) ||
+	    !ValidatePropertyArea(serialArea.Data(), serialArea.Size(), error)) {
+		return false;
+	}
+	uint32_t *areaSerial =
+		reinterpret_cast<uint32_t *>(serialArea.Data() + kPropertyAreaSerialOffset);
+
+	// Unpublish the node first: new lookups stop finding it immediately.
+	// Then clear the prop_info serial, so a reader that already holds the old
+	// pointer treats the record as never-published and retries the lookup
+	// instead of reading a value that is about to be reclaimed.
+	StorePublishedU32(area.Data() + kPropertyAreaHeaderSize + node + kTrieNodePropOffset, 0);
+	__atomic_thread_fence(__ATOMIC_RELEASE);
+	StoreU32(area.Data() + kPropertyAreaHeaderSize + propOffset, 0);
+	BumpAreaSerial(areaSerial);
+
+	if (prune) {
+		size_t budget = dataSize / kTrieNodeHeaderSize + 1;
+		bool empty = true;
+		PruneSubtree(area.Data(), dataSize,
+			     LoadTriePointer(area.Data(), 0, kTrieNodeChildrenOffset), &budget,
+			     &empty);
+	}
+
+	if (__system_property_find(name.c_str()) != nullptr) {
+		*error = "property \"" + name + "\" is still visible after deletion";
+		return false;
+	}
+	return true;
+}
+
+// The SELinux context of a property is simply the name of the area file that
+// holds it; bionic maps /dev/__properties__/<context>.
+bool GetPropertyContext(const std::string &name, std::string *context)
+{
+	const prop_info *info = __system_property_find(name.c_str());
+	if (info == nullptr) {
+		return false;
+	}
+
+	std::vector<Mapping> maps;
+	if (!ParseSelfMaps(maps)) {
+		return false;
+	}
+	const Mapping *mapping = FindMapping(maps, info);
+	if (mapping == nullptr || !IsPropertyAreaFile(mapping->path)) {
+		return false;
+	}
+
+	*context = AreaBaseName(mapping->path);
+	return true;
+}
+
+bool CompactOneArea(const std::string &areaPath, const std::string &serialPath,
+		    std::string *error)
+{
+	WritableMapping area;
+	if (!area.Open(areaPath, error) ||
+	    !ValidatePropertyArea(area.Data(), area.Size(), error)) {
+		return false;
+	}
+	size_t dataSize = area.Size() - kPropertyAreaHeaderSize;
+
+	std::vector<std::pair<std::string, std::string>> entries;
+	size_t budget = dataSize / kTrieNodeHeaderSize + 1;
+	if (!WalkTrie(area.Data(), dataSize,
+		      LoadTriePointer(area.Data(), 0, kTrieNodeChildrenOffset), &entries, &budget,
+		      error)) {
+		return false;
+	}
+
+	uint32_t used = LoadU32(area.Data() + kPropertyAreaBytesUsedOffset);
+	bool hasBackup = HasDirtyBackupArea(area.Data(), dataSize);
+	size_t initialUsed = kTrieNodeHeaderSize + (hasBackup ? PROP_VALUE_MAX : 0);
+
+	// 每条属性至少要占一个 prop_info（含名字），长值还要额外的值空间。
+	size_t minimum = initialUsed;
+	for (const auto &entry : entries) {
+		minimum += AlignUp4(kPropInfoHeaderSize + entry.first.size() + 1);
+		if (entry.second.size() >= static_cast<size_t>(PROP_VALUE_MAX)) {
+			minimum += AlignUp4(entry.second.size() + 1);
+		}
+	}
+	// 已经是最紧凑的布局，就不冒重写的风险了。
+	if (used <= minimum) {
+		return true;
+	}
+
+	std::vector<uint8_t> backup(area.Data(), area.Data() + area.Size());
+	std::vector<uint8_t> fresh(area.Size(), 0);
+	std::memcpy(fresh.data(), area.Data(), kPropertyAreaHeaderSize);
+	StoreU32(fresh.data() + kPropertyAreaBytesUsedOffset, static_cast<uint32_t>(initialUsed));
+	InitTrieNode(fresh.data(), 0, "", 0);
+
+	uint32_t scratchSerial = 0;
+	for (const auto &entry : entries) {
+		if (!InsertPropInfo(fresh.data(), fresh.size(), entry.first, entry.second,
+				    &scratchSerial, error)) {
+			return false;
+		}
+	}
+
+	// 先在内存里自检一遍：新镜像必须能遍历出同一组属性。
+	std::vector<std::pair<std::string, std::string>> rebuilt;
+	size_t checkBudget = dataSize / kTrieNodeHeaderSize + 1;
+	if (!WalkTrie(fresh.data(), dataSize,
+		      LoadTriePointer(fresh.data(), 0, kTrieNodeChildrenOffset), &rebuilt,
+		      &checkBudget, error)) {
+		return false;
+	}
+	std::sort(entries.begin(), entries.end());
+	std::sort(rebuilt.begin(), rebuilt.end());
+	if (entries != rebuilt) {
+		*error = "compacted layout failed verification";
+		return false;
+	}
+
+	WritableMapping serialArea;
+	if (!serialArea.Open(serialPath, error) ||
+	    !ValidatePropertyArea(serialArea.Data(), serialArea.Size(), error)) {
+		return false;
+	}
+	uint32_t *areaSerial =
+		reinterpret_cast<uint32_t *>(serialArea.Data() + kPropertyAreaSerialOffset);
+
+	// 原地覆盖。property area 被 init 长期 mmap，换文件（rename）会让两边
+	// 看到不同的 inode，只能写回同一份映射。
+	std::memcpy(area.Data(), fresh.data(), fresh.size());
+	__atomic_thread_fence(__ATOMIC_RELEASE);
+	BumpAreaSerial(areaSerial);
+
+	// 写回后再验一次；失败就把旧内容原样写回去。
+	std::vector<std::pair<std::string, std::string>> published;
+	size_t afterBudget = dataSize / kTrieNodeHeaderSize + 1;
+	if (!WalkTrie(area.Data(), dataSize,
+		      LoadTriePointer(area.Data(), 0, kTrieNodeChildrenOffset), &published,
+		      &afterBudget, error)) {
+		published.clear();
+	}
+	std::sort(published.begin(), published.end());
+	if (published != entries) {
+		std::memcpy(area.Data(), backup.data(), backup.size());
+		__atomic_thread_fence(__ATOMIC_RELEASE);
+		BumpAreaSerial(areaSerial);
+		*error = "compact verification failed, original layout restored";
+		return false;
+	}
+	return true;
+}
+
+bool CompactDirectory(const std::string &filter, std::string *error)
+{
+	const std::string serialPath = SerialAreaPath();
+	DIR *dir = opendir(kPropertyAreaDir);
+	if (dir == nullptr) {
+		*error = std::string("cannot open ") + kPropertyAreaDir + ": " +
+			 std::strerror(errno);
+		return false;
+	}
+
+	bool ok = true;
+	bool matched = filter.empty();
+	while (struct dirent *entry = readdir(dir)) {
+		std::string name = entry->d_name;
+		if (name == "." || name == ".." || name == kSerialAreaFileName ||
+		    name == "property_info") {
+			// property_info 是 context 索引，不是属性数据，不能重排。
+			continue;
+		}
+		if (!filter.empty() && name != filter) {
+			continue;
+		}
+		matched = true;
+		if (entry->d_type != DT_REG && entry->d_type != DT_UNKNOWN) {
+			continue;
+		}
+
+		std::string path = std::string(kPropertyAreaDir) + name;
+		std::string detail;
+		if (CompactOneArea(path, serialPath, &detail)) {
+			continue;
+		}
+		// property_info 之类不是 property area 的文件，静默跳过。
+		if (detail.find("is not a property area") != std::string::npos ||
+		    detail.find("invalid property area header") != std::string::npos ||
+		    detail.find("property area is too small") != std::string::npos) {
+			continue;
+		}
+		fprintf(stderr, "resetprop: %s: %s\n", path.c_str(), detail.c_str());
+		ok = false;
+	}
+	closedir(dir);
+
+	if (!matched) {
+		*error = "no property area for context \"" + filter + "\"";
+		return false;
+	}
+	return ok;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -915,9 +1525,29 @@ bool write(const std::string &name, const std::string &value, bool forceDirect,
 	return SetProperty(name, value, forceDirect, error);
 }
 
-void list()
+bool remove(const std::string &name, bool prune, std::string *error)
 {
-	ShowAllProperties();
+	return RemoveProperty(name, prune, error);
+}
+
+bool context_of(const std::string &name, std::string *context)
+{
+	return GetPropertyContext(name, context);
+}
+
+bool compact(const std::string &contextFilter, std::string *error)
+{
+	return CompactDirectory(contextFilter, error);
+}
+
+bool snapshot(std::map<std::string, std::string> *out, std::string *error)
+{
+	return SnapshotAll(out, error);
+}
+
+void list(bool withContext)
+{
+	ShowAllProperties(withContext);
 }
 
 } // namespace ncore::prop

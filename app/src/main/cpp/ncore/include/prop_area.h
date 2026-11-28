@@ -7,6 +7,7 @@
 // writer 协议（trie + prop_info + serial）直接改原始布局，所以 ro.* 也能改。
 #pragma once
 
+#include <map>
 #include <string>
 
 namespace ncore::prop {
@@ -21,7 +22,25 @@ bool read(const std::string& name, std::string* value);
 bool write(const std::string& name, const std::string& value, bool force_direct,
            std::string* error);
 
-// 按名字排序输出 `[name]: [value]`。
-void list();
+// 删除属性：把 trie 节点的 prop 指针清零并递增 area serial，bionic 之后
+// 就查不到它了（`__system_property_find` 返回 nullptr）。
+// prune 为 true 时会顺带回收因此变空的 trie 节点。
+bool remove(const std::string& name, bool prune, std::string* error);
+
+// 属性所属的 SELinux context，就是 `/dev/__properties__/<context>` 的文件名
+// （形如 `u:object_r:build_prop:s0`）。属性不存在时返回 false。
+bool context_of(const std::string& name, std::string* context);
+
+// 把当前所有属性读进 out（名字 -> 值），不改动任何状态。
+bool snapshot(std::map<std::string, std::string>* out, std::string* error);
+
+// 按名字排序输出 `[name]: [value]`；with_context 时输出
+// `[name]: [context]`（等价 resetprop 的 -Z）。
+void list(bool with_context = false);
+
+// 紧凑 property area，回收被更新/删除遗弃的 prop_info 与长值。
+// context 为空时处理 /dev/__properties__ 下所有 area，否则只处理
+// `<context>` 那个。原地重写：文件大小不变，只把 bytes_used 降回去。
+bool compact(const std::string& context_filter, std::string* error);
 
 }  // namespace ncore::prop
