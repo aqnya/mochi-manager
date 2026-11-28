@@ -92,15 +92,11 @@ internal object WebShell {
     /**
      * 以 root 读取一个文件。
      *
-     * 优先 JNI：内核在线时在子进程里 setresuid(0) 提权后 open/read，只有一次 fork，
-     * 比 `su -c cat` 少一次 su 二进制 exec + shell 解析。内核不在线 / 不是 manager
-     * 时退回 `su -c cat`。读不到返回 null（调用方给 404）。
+     * 走 JNI：内核在线时在子进程里 setresuid(0) 提权后 open/read，只有一次 fork，
+     * 比 `su -c cat` 少一次 su 二进制 exec + shell 解析；WebView 每个子资源都要读一次，
+     * 这个差距会被放大几十倍。内核不在线 / 不是 manager 时直接返回 null（调用方给 404）。
      */
-    fun readFileBytes(path: String): ByteArray? {
-        NekoNative.readRootFile(path)?.let { return it }
-        val (code, bytes) = run(listOf("-c", "cat -- ${quote(path)}"), mergeStderr = false, timeoutSeconds = 30)
-        return bytes.takeIf { code == 0 && it.isNotEmpty() }
-    }
+    fun readFileBytes(path: String): ByteArray? = NekoNative.readRootFile(path)
 
     /** 启一个 `su` 进程，返回 [Process]；两种候选都起不来时返回 null。 */
     private fun start(
@@ -178,6 +174,4 @@ internal object WebShell {
         }, "nekosu-webui-drain").apply { isDaemon = true }
 
     private fun withPath(cmd: String): String = "PATH=/sbin:/system/sbin:/system/bin:/system/xbin; export PATH; $cmd"
-
-    private fun quote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 }
