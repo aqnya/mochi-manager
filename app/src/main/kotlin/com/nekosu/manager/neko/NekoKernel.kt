@@ -36,23 +36,17 @@ object NekoKernel {
         return parseAllowProfile(text).also { Log.d(TAG, "profiles count=${it.size}") }
     }
 
-    fun isAllowed(uid: Int): Boolean? = NekoNative.hasUid(uid)
-
     /**
-     * 授权/取消授权。取消时内核表项与落盘条目一起清（JNI 里完成）。
-     *
-     * 返回 false：授权时是内核表项没写进去，撤销时是落盘条目没删掉，重启后状态可能回退。
+     * 按 uid 删除整条 profile：内核表项 + 落盘一起，由 JNI 单次完成（对齐上游 removeProfile）。
+     * 内核对不存在的条目返回 -ENOENT，按幂等成功处理；返回 false 只表示落盘没删掉。
      */
-    fun setAllowed(
-        uid: Int,
-        allow: Boolean,
-    ): Boolean {
-        return if (allow) NekoNative.addUid(uid) else NekoNative.delUid(uid)
-    }
+    fun removeProfile(uid: Int): Boolean = NekoNative.removeProfile(uid)
 
     /**
      * 写一条 profile：内核表项 + 落盘一起，由 JNI 单次完成（对齐上游 setProfileProto）。
-     * 失败只表示落盘没成功——内核那份通常已经生效。
+     *
+     * 上游统一 ioctl 后，这条「整条 upsert」本身就是授权动作——内核会为 uid 建表项，
+     * 不再需要先 addUid。失败只表示落盘没成功——内核那份通常已经生效。
      */
     fun setProfile(
         uid: Int,

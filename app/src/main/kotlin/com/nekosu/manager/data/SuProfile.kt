@@ -278,7 +278,7 @@ object SuProfileStore {
         val next = _profiles.value.toMutableMap().apply { remove(uid) }
         _profiles.value = next
         persist(next)
-        // 本地条目删掉了，内核表项与落盘条目也要一起清（JNI 的 delUid 一步做完）：
+        // 本地条目删掉了，内核表项与落盘条目也要一起清（JNI 的 removeProfile 一步做完）：
         // 留下任何一份，重启后 ncore 都会把它恢复成「已授权」。
         syncKernel((previous ?: SuProfile("uid $uid", uid)).copy(allowSu = false))
     }
@@ -403,16 +403,11 @@ object SuProfileStore {
 
 /**
  * 内核侧的两个动作。落盘不在这里——它和内核写一起封装在 JNI 里（对齐上游
- * `adduid` / `deluid` / `setProfileProto`），管理器只需要这两步。
+ * `setProfileProto` / `removeProfile`），管理器只需要这两步。
  *
- * 抽成接口是为了让「撤销只调一次、授权按固定顺序」能被单测覆盖。
+ * 抽成接口是为了让「授权/撤销各调哪个、调几次」能被单测覆盖。
  */
 internal interface KernelOps {
-    fun setAllowed(
-        uid: Int,
-        allow: Boolean,
-    ): Boolean
-
     fun setProfile(
         uid: Int,
         caps: Long,
@@ -420,15 +415,12 @@ internal interface KernelOps {
         ns: Int,
         rootUid: Int,
     ): Boolean
+
+    fun removeProfile(uid: Int): Boolean
 }
 
 /** [KernelOps] 的生产实现，直接转给 [NekoKernel]。 */
 internal object NekoKernelOps : KernelOps {
-    override fun setAllowed(
-        uid: Int,
-        allow: Boolean,
-    ): Boolean = NekoKernel.setAllowed(uid, allow)
-
     override fun setProfile(
         uid: Int,
         caps: Long,
@@ -436,18 +428,18 @@ internal object NekoKernelOps : KernelOps {
         ns: Int,
         rootUid: Int,
     ): Boolean = NekoKernel.setProfile(uid, caps, domain, ns, rootUid)
+
+    override fun removeProfile(uid: Int): Boolean = NekoKernel.removeProfile(uid)
 }
 
 /**
  * 把一次授权/撤销落到内核。
  *
- * 落盘（`/data/adb/nksu/profile`）不在这一层做：JNI 的 `addUid` / `delUid` /
- * `setProfile` 已经把「内核表项 + 落盘」封装成一次调用，与上游 NekoSU 一致。
- * 管理器这边只要顺序对：
+ * 上游统一 profile ioctl（退役 per-field 的 add/del/has uid）后，内核表只由
+ * 「整条 upsert」和「按 uid 删」驱动，落盘也封装在这两次 JNI 调用里：
  *
- *  - 授权：先建表项（内核顺带同步路径规则），再写 profile（能力位/域/命名空间/root uid，
- *    这一步同时落盘）；
- *  - 撤销：一次 `setAllowed(uid, false)` 就够了，内核表项与落盘条目一起删。
+ *  - 授权：一次 `setProfile`（能力位/域/命名空间/root uid），内核顺带建表项并落盘；
+ *  - 撤销：一次 `removeProfile(uid)`，内核表项与落盘条目一起删（幂等，-ENOENT 视为已撤销）。
  */
 internal fun applyKernel(
     profile: SuProfile,
@@ -455,15 +447,14 @@ internal fun applyKernel(
 ) {
     val uid = profile.appUid
     if (profile.allowSu) {
-        if (!kernel.setAllowed(uid, true)) Log.w(TAG, "set allowed failed uid=$uid allow=true")
         val caps = capsMask(profile.capabilities)
         // 最后一道防线：任何路径漏进来的非法域（例如旧版误存的 "0"）都不能写进内核，
         // 否则 setcon 失败会让整个授权流程异常。
         val domain = profile.context.takeIf { isValidSelinuxContext(it) } ?: SuProfile.DEFAULT_CONTEXT
         if (!kernel.setProfile(uid, caps, domain, profile.namespace, profile.runAsUid)) {
-            Log.w(TAG, "persist profile failed uid=$uid")
+            Log.w(TAG, "set profile failed uid=$uid")
         }
         return
     }
-    if (!kernel.setAllowed(uid, false)) Log.w(TAG, "revoke failed uid=$uid")
+    if (!kernel.removeProfile(uid)) Log.w(TAG, "remove profile failed uid=$uid")
 }

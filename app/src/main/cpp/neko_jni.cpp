@@ -276,37 +276,25 @@ Java_com_nekosu_manager_neko_NekoNative_nativeAvailable(JNIEnv*, jclass) {
     return ioc(IOC_GET_VERSION, data, sizeof(data)) >= 0 ? JNI_TRUE : JNI_FALSE;
 }
 
-/// 1 已授权 / 0 未授权 / 负值 调用失败。
+/// 按 uid 删除整条 profile（内核表项 + 落盘条目一次完成）。
+///
+/// 上游统一 profile ioctl 后，授权表只由 IOC_SET_PROFILE（整条 upsert）和本函数
+/// （按 uid 删）驱动，per-field 的 add/del/has uid ioctl 已退役。撤销是幂等的：
+/// 内核对不存在的条目返回 -ENOENT，视为已撤销，仍要继续清落盘那份。
 JNIEXPORT jint JNICALL
-Java_com_nekosu_manager_neko_NekoNative_nativeHasUid(JNIEnv*, jclass, jint uid) {
+Java_com_nekosu_manager_neko_NekoNative_nativeRemoveProfile(JNIEnv*, jclass, jint uid) {
+    if (uid < 0) {
+        LOGE("remove profile: negative uid %d", uid);
+        return -1;
+    }
     uint8_t data[FMAC_DATA_UID] = {};
     put_u32(data, FMAC_OFF_UID, static_cast<uint32_t>(uid));
-    if (ioc(IOC_HAS_UID, data, sizeof(data)) < 0) return -1;
-    uint32_t value = 0;
-    std::memcpy(&value, data, sizeof(value));
-    return value != 0 ? 1 : 0;
-}
+    const int ret = ioc(IOC_REMOVE_PROFILE, data, sizeof(data));
+    if (ret < 0 && ret != -ENOENT) LOGE("remove profile failed uid=%d ret=%d", uid, ret);
 
-JNIEXPORT jint JNICALL
-Java_com_nekosu_manager_neko_NekoNative_nativeAddUid(JNIEnv*, jclass, jint uid) {
-    uint8_t data[FMAC_DATA_UID] = {};
-    put_u32(data, FMAC_OFF_UID, static_cast<uint32_t>(uid));
-    const int ret = ioc(IOC_ADD_UID, data, sizeof(data));
-    return ret < 0 ? ret : 0;
-}
-
-JNIEXPORT jint JNICALL
-Java_com_nekosu_manager_neko_NekoNative_nativeDelUid(JNIEnv*, jclass, jint uid) {
-    uint8_t data[FMAC_DATA_UID] = {};
-    put_u32(data, FMAC_OFF_UID, static_cast<uint32_t>(uid));
-    const int ret = ioc(IOC_DEL_UID, data, sizeof(data));
-    // 条目本来就不在表里（内核对 clear 返回 -ENOENT）说明已经是撤销状态：
-    // 撤销必须幂等，不能因为内核这一步就跳过落盘清理。
-    if (ret < 0 && ret != -ENOENT) LOGE("del uid failed uid=%d ret=%d", uid, ret);
-
-    // 与上游 deluid 一致：内核表项和落盘条目一起清，管理器只调这一个函数。
+    // 与上游 removeProfile 一致：内核表项和落盘条目一起清，管理器只调这一个函数。
     if (!remove_persisted_profile(static_cast<uint32_t>(uid))) {
-        LOGE("revoke persist failed uid=%d", uid);
+        LOGE("remove profile persist failed uid=%d", uid);
         return -1;
     }
     return 0;

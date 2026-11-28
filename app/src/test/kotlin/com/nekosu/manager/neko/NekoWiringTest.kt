@@ -29,9 +29,8 @@ class NekoWiringTest {
         assertFalse(NekoNative.loaded)
         assertNull(NekoNative.version())
         assertFalse(NekoNative.available())
-        assertNull(NekoNative.hasUid(10000))
         assertNull(NekoNative.listProfiles())
-        assertFalse(NekoNative.addUid(10000))
+        assertFalse(NekoNative.removeProfile(10000))
         assertNull(NekoNative.featureList())
         assertFalse(NekoNative.featureSet(KernelFeature.SELINUX_HIDE, 1L))
     }
@@ -55,7 +54,7 @@ class NekoWiringTest {
         assertFalse(NekoKernel.available)
         assertNull(NekoKernel.profiles())
         assertNull(NekoKernel.features())
-        assertNull(NekoKernel.isAllowed(10000))
+        assertFalse(NekoKernel.removeProfile(10000))
     }
 
     @Test

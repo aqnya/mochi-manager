@@ -28,13 +28,7 @@ object NekoNative {
     private external fun nativeAvailable(): Boolean
 
     @JvmStatic
-    private external fun nativeHasUid(uid: Int): Int
-
-    @JvmStatic
-    private external fun nativeAddUid(uid: Int): Int
-
-    @JvmStatic
-    private external fun nativeDelUid(uid: Int): Int
+    private external fun nativeRemoveProfile(uid: Int): Int
 
     @JvmStatic
     private external fun nativeListProfiles(): String?
@@ -64,13 +58,13 @@ object NekoNative {
 
     fun available(): Boolean = call { nativeAvailable() } ?: false
 
-    /** 1 已授权 / 0 未授权 / null 调用失败。 */
-    fun hasUid(uid: Int): Boolean? = call { nativeHasUid(uid) }?.let { it > 0 }
-
-    fun addUid(uid: Int): Boolean = call { nativeAddUid(uid) } == 0
-
-    /** 撤销授权：删内核表项 + 删落盘条目，一次 JNI 调用搞定。 */
-    fun delUid(uid: Int): Boolean = call { nativeDelUid(uid) } == 0
+    /**
+     * 按 uid 删除整条 profile：内核表项 + 落盘条目一次 JNI 调用完成。
+     *
+     * 上游统一 profile ioctl 后不再有 per-field 的 add/del/has uid，撤销统一走这里；
+     * 内核对不存在的条目返回 -ENOENT，JNI 已按幂等处理。
+     */
+    fun removeProfile(uid: Int): Boolean = call { nativeRemoveProfile(uid) } == 0
 
     fun listProfiles(): String? = call { nativeListProfiles() }
 
