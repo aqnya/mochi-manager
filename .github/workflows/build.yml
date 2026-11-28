@@ -46,9 +46,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
 
       - name: Unit tests
-        env:
-          NEKOSU_TEST_JAVA_HOME: ${{ env.JAVA_HOME }}
-        run: ./gradlew testDebugUnitTest
+        # setup-java 设置的 JAVA_HOME 只存在于 shell 环境，${{ env.JAVA_HOME }} 取不到，
+        # 必须在 shell 里导出，测试 JVM 才会真正用 JDK 21（Robolectric 渲染用例需要）。
+        run: |
+          export NEKOSU_TEST_JAVA_HOME="$JAVA_HOME"
+          ./gradlew testDebugUnitTest
 
       - name: Decode release keystore
         if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.build_type == 'release') }}

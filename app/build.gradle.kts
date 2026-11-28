@@ -108,8 +108,12 @@ kotlin {
 // （编译产物仍是 Java 17，Android 侧由 D8 处理）。本地用固定的 JDK 21 路径，
 // CI 用 NEKOSU_TEST_JAVA_HOME 指向 setup-java 装好的 21。
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    // 环境变量存在但为空字符串时也要回退：CI 的 `${{ env.JAVA_HOME }}` 若取不到值，
+    // 传进来的就是空串，此时必须继续用本地 JDK 21，否则 Robolectric 会以 JVM 默认
+    // 版本启动，加载 capsule 的 Java 21 字节码时报 UnsupportedClassVersionError。
     val candidate =
         System.getenv("NEKOSU_TEST_JAVA_HOME")
+            ?.takeIf { it.isNotBlank() }
             ?: "/opt/jdk-21.0.13.1+2"
     val java = file("$candidate/bin/java")
     if (java.exists()) executable = java.absolutePath
