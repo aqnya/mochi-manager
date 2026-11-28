@@ -94,7 +94,7 @@ android {
             // ncore 是「顶着 .so 名字的可执行文件」：内核要按路径读它、首次启动还要
             // 复制到 /data/adb/ncore。必须解压成真实文件，不能留在 APK 里直接映射。
             useLegacyPackaging = true
-            // Cargo 已经 strip 过，别再让 AGP 调 NDK 的 strip 处理一遍
+            // ncore 由 CMake 构建：release 已在链接期 strip（-s），别再让 AGP 处理一遍
             keepDebugSymbols += "**/libncore.so"
         }
     }

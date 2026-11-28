@@ -87,13 +87,13 @@ app/src/main/kotlin/com/nekosu/manager/
 它是 NekoSU 的用户态运行时，内核控制通道、模块运行时、su / resetprop / init 事件都在里面。
 
 ```
-neko/                       上游 neko 包（已移除 jni/）
-├── ncore/                  模块安装/启停/卸载、su、resetprop、init 事件、manager 扫描
-├── kzcall/ proto/ store/   内核调用封装、protobuf 模型、profile 存储
-├── third_party/ksu_props/  属性读写
-└── build-ncore.sh          交叉编译 ncore → app/src/main/jniLibs
+neko/ncore/assets,bin/      banner / installer.sh / busybox（由 CMake .incbin 嵌入 ncore）
 uapi/                       内核 UAPI 头（ioctl/selinux/version），kernel 与 ncore 共用一份
 app/src/main/cpp/           本工程自己的 JNI 桥（C++）
+├── ncore/                  C++ 版 ncore（模块/su/resetprop/init 事件/manager 扫描），
+│                           add_executable 直接构建成 libncore.so 落进 jniLibs
+├── neko_jni.cpp            JNI 桥
+└── store/                  profile 落盘存储
 ```
 
 ### JNI 由本工程实现
@@ -108,15 +108,18 @@ app/src/main/cpp/           本工程自己的 JNI 桥（C++）
 
 ### ncore 的编译与部署
 
+ncore 已经用 C++ 完整重写，并直接用 CMake `add_executable` 集成进本工程的 native 构建：
+
 ```sh
-./neko/build-ncore.sh                                  # 默认：未签名，debug 内核可直接用
-SIGNING_KEY=ncore.pem SIGNING_PASSWORD=... ./neko/build-ncore.sh   # 只有 release 内核需要
+./gradlew :app:externalNativeBuildDebug   # 或 assembleDebug / assembleRelease，无需单独步骤
 ```
 
-脚本用 NDK clang 交叉编译（`aarch64-linux-android`，API 31），产物直接放到
-`app/src/main/jniLibs/arm64-v8a/libncore.so`。它其实是**可执行文件顶着 .so 的名字**：
-内核要按 `/data/app/<pkg>/lib/arm64-v8a/libncore.so` 这个路径引导它，所以 APK 里必须解压成真实文件
-（`packaging.jniLibs.useLegacyPackaging = true`）。
+`app/src/main/cpp/ncore/CMakeLists.txt` 把 ncore 构建成**顶着 .so 名字的 PIE 可执行文件**，
+直接输出到 `app/src/main/jniLibs/arm64-v8a/libncore.so`。banner / installer.sh / busybox
+用汇编 `.incbin` 流式嵌入只读段，不生成巨型 C 数组。内核要按
+`/data/app/<pkg>/lib/arm64-v8a/libncore.so` 这个路径引导它，所以 APK 里必须解压成真实文件
+（`packaging.jniLibs.useLegacyPackaging = true`）。不再需要 rustup / cargo / 拷贝 / 追加签名等
+任何单独构建步骤。
 
 引导和鉴权都不归管理器管：内核的 exec 探针只认 `/data/adb/ncore` 这个路径，init 在
 post-fs-data 执行它时自动挂上控制 fd；ncore 自己在 boot 阶段扫 `packages.xml`（用编译期

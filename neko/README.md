@@ -2,6 +2,12 @@
 
 NekoSU's userspace runtime.
 
+> **Note:** the Compose manager no longer builds this Rust `ncore`. It uses a
+> full C++ port under `manager/app/src/main/cpp/ncore/`, built directly by CMake
+> as `libncore.so`. The Rust sources here are kept as the behavioral reference
+> and for the shared assets in `ncore/assets` and `ncore/bin/aarch64`; the old
+> `build-ncore.sh` has been removed.
+
 - `ncore/` — ported from [KernelSU](https://github.com/tiann/KernelSU) (GPL-3.0-or-later).
   The KernelSU kernel interface is replaced by the NekoSU adapter in `kzcall/`.
   Its source is grouped by responsibility:
