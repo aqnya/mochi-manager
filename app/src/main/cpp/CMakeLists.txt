@@ -45,6 +45,7 @@ target_link_options(neko PRIVATE -Wl,--exclude-libs,ALL)
 
 target_link_libraries(neko PRIVATE store log)
 
-# ncore：顶着 libncore.so 名字的 PIE 可执行文件，由 CMake 直接构建并落到
-# jniLibs/<abi>/，取代原先单独跑 build-ncore.sh（rustup + cargo + 拷贝 + 签名）的特殊处理。
+# ncore：顶着 libncore.so 名字的 PIE 可执行文件，由 CMake 直接构建（产物由 AGP
+# 收进 cxx/<config>/<hash>/obj/<abi>/），取代原先单独跑 build-ncore.sh
+# （rustup + cargo + 拷贝 + 签名）的特殊处理。
 add_subdirectory(ncore)

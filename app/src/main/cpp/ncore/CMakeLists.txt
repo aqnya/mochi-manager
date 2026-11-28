@@ -96,6 +96,11 @@ set(NCORE_SOURCES
     src/resetprop.cpp
     src/assets_data.cpp
     third_party/zstd/zstddeclib.c
+    third_party/xz/xz_crc32.c
+    third_party/xz/xz_crc64.c
+    third_party/xz/xz_dec_stream.c
+    third_party/xz/xz_dec_lzma2.c
+    third_party/xz/xz_dec_bcj.c
     "${EMBEDDED_S}"
 )
 
@@ -104,11 +109,20 @@ add_executable(ncore ${NCORE_SOURCES})
 target_include_directories(ncore PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd"   # zstd.h（单文件 decoder 的公开 API）
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xz"     # xz.h（xz-embedded 的公开 API）
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../"   # 仓库根 uapi/*.h
 )
 
-# 第三方单文件解码器，不参与本项目的警告基线。
+# 第三方解码器，不参与本项目的警告基线。
 set_source_files_properties(third_party/zstd/zstddeclib.c PROPERTIES COMPILE_OPTIONS "-w")
+set_source_files_properties(
+    third_party/xz/xz_crc32.c
+    third_party/xz/xz_crc64.c
+    third_party/xz/xz_dec_stream.c
+    third_party/xz/xz_dec_lzma2.c
+    third_party/xz/xz_dec_bcj.c
+    PROPERTIES COMPILE_OPTIONS "-w"
+)
 
 target_compile_definitions(ncore PRIVATE
     NKSU_VERSION_CODE="${NKSU_VERSION_CODE}"
@@ -134,9 +148,10 @@ set_target_properties(ncore PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-# zlib：zip 解压的 inflate（method 8）。
-# zstd（method 95）由 third_party/zstd 的单文件 decoder 提供，无外部依赖，
-# 因为 NDK 不导出 libzstd，设备上的系统库也不保证存在。
+# zlib：zip 解压的 inflate（method 8）。这是 NDK 里唯一稳定可用的解压库。
+# zstd（method 93）走 third_party/zstd 的单文件 decoder，xz（method 95）走
+# third_party/xz 的 xz-embedded：NDK 既不导出 libzstd 也不导出 liblzma，
+# 设备上的系统库也不保证存在，静态编进来最稳。
 find_library(ZLIB z)
 target_link_libraries(ncore PRIVATE ${ZLIB})
 

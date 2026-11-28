@@ -1,6 +1,7 @@
 # zstd（单文件解码器）
 
-只用到 **decompress** 部分，用于解压 zip 的 method 95（Zstandard）。
+只用到 **decompress** 部分，用于解压 zip 的 method 93（Zstandard；
+method 20 是它的废弃编号，也一并认）。
 不走系统的 `libzstd.so`：NDK 不导出这个库，设备上也不保证存在，
 静态编进来最稳。
 
@@ -25,5 +26,8 @@ sh create_single_file_decoder.sh        # 产出 zstddeclib.c
 
 **升级时别忘同步这一处**：重新生成后把该行注释掉。
 
-`unzip.cpp` 只依赖 `ZSTD_decompress` / `ZSTD_decompressStream` / `ZSTD_isError` /
+`unzip.cpp` 只依赖 `ZSTD_decompressStream` / `ZSTD_createDStream` / `ZSTD_isError` /
 `ZSTD_getErrorName` / `ZSTD_getErrorCode` 这几个稳定 API。
+
+注意：**method 95 不是 zstd**，APPNOTE 6.3.8 起 95 是 XZ（见 `third_party/xz`）。
+这里曾经把 95 当成 zstd，结果解真·XZ 数据时报 `Unknown frame descriptor`。
