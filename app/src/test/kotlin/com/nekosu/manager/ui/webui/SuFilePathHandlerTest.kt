@@ -2,6 +2,7 @@ package com.nekosu.manager.ui.webui
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
@@ -60,11 +61,24 @@ class SuFilePathHandlerTest {
      */
     @Test
     fun `拦截响应必须带 CORS 头`() {
-        assertEquals("*", WEBUI_RESPONSE_HEADERS["Access-Control-Allow-Origin"])
+        // 回显页面自身的精确 Origin（同源请求带凭证，通配符不合法）
+        assertEquals("https://$WEB_DOMAIN", WEBUI_RESPONSE_HEADERS["Access-Control-Allow-Origin"])
+        assertEquals("true", WEBUI_RESPONSE_HEADERS["Access-Control-Allow-Credentials"])
 
         val handler = SuFilePathHandler(java.io.File(root)) { WebInsets(0, 0, 0, 0) }
         val css = handler.handle("internal/colors.css")
         assertEquals("text/css", css.mimeType)
-        assertEquals("*", css.responseHeaders?.get("Access-Control-Allow-Origin"))
+        assertEquals("https://$WEB_DOMAIN", css.responseHeaders?.get("Access-Control-Allow-Origin"))
+    }
+
+    /** 动态插入的样式链接必须被拉回 no-cors：WebView 的 CORS 校验在本机不可靠。 */
+    @Test
+    fun `HTML 注入去掉 crossorigin 的引导脚本`() {
+        val html = "<!doctype html><html><head><meta charset=\"utf-8\"></head><body></body></html>"
+        val injected = injectWebUiShim(html)
+        assertTrue(injected.contains("HTMLLinkElement.prototype"))
+        assertTrue(injected.indexOf("<script>") < injected.indexOf("<meta"))
+        // 幂等：重复注入不会叠加
+        assertEquals(injected, injectWebUiShim(injected))
     }
 }

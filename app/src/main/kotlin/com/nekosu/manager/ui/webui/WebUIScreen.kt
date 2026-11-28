@@ -114,7 +114,8 @@ fun WebUIScreen(webUIState: WebUIState) {
     val webViewBackground = MochiTheme.colorScheme.background.toArgb()
 
     val modDir = webUIState.modDir
-    val webRoot = remember(modDir) { java.io.File("$modDir/webroot") }
+    val webRoot = remember(modDir) { webUIState.webRoot }
+    val directRead = remember(modDir) { webUIState.webRootStaged }
 
     val webView =
         remember(modDir) {
@@ -134,7 +135,7 @@ fun WebUIScreen(webUIState: WebUIState) {
                 val assetLoader =
                     WebViewAssetLoader.Builder()
                         .setDomain(WEB_DOMAIN)
-                        .addPathHandler("/", SuFilePathHandler(webRoot) { webUIState.currentInsets })
+                        .addPathHandler("/", SuFilePathHandler(webRoot, directRead) { webUIState.currentInsets })
                         .build()
 
                 webViewClient =
@@ -194,11 +195,27 @@ fun WebUIScreen(webUIState: WebUIState) {
                             request: WebResourceRequest,
                             error: WebResourceError,
                         ) {
-                            if (request.isForMainFrame) {
-                                loading = false
-                                Log.w(TAG, "主框架加载失败 code=${error.errorCode}: ${error.description} url=${request.url}")
-                            }
+                            // 子资源的失败也要记：白屏往往是某个 chunk 挂了，
+                            // 只有主框架错误日志是查不出来的
+                            Log.w(
+                                TAG,
+                                "加载失败 code=${error.errorCode} ${error.description} " +
+                                    "main=${request.isForMainFrame} url=${request.url}",
+                            )
+                            if (request.isForMainFrame) loading = false
                             super.onReceivedError(view, request, error)
+                        }
+
+                        override fun onReceivedHttpError(
+                            view: WebView,
+                            request: WebResourceRequest,
+                            errorResponse: WebResourceResponse,
+                        ) {
+                            Log.w(
+                                TAG,
+                                "HTTP ${errorResponse.statusCode} main=${request.isForMainFrame} url=${request.url}",
+                            )
+                            super.onReceivedHttpError(view, request, errorResponse)
                         }
 
                         override fun onRenderProcessGone(

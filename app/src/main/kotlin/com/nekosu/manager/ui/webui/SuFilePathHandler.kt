@@ -18,22 +18,65 @@ private const val TAG = "NekoSU/WebUI"
  *
  * 这是 WebView 的一个硬性坑：`shouldInterceptRequest` 返回的 `WebResourceResponse`
  * **不会**被 WebView 当作「同源可信响应」，带 `crossorigin` 的请求（Vite 动态插入的
- * `<link rel=stylesheet crossorigin>`、ES module 的 modulepreload）会因缺少 CORS
- * 头而直接失败。实测表现就是模块页的 CSS 预加载报
+ * `<link rel=stylesheet crossorigin>`、ES module 的 modulepreload）会因 CORS 校验
+ * 不通过而失败。实测表现就是模块页的 CSS 预加载报
  * `Unable to preload CSS for https://.../App-xxx.css`，应用启动即中断、整页白屏；
- * 而 HTML 里静态写的、没有 crossorigin 的 `<link>` 反而正常，很难联想到 CORS。
+ * 而 HTML 里静态写的、没有 crossorigin 的 `<link>` 反而正常。
  *
- * `Access-Control-Allow-Origin: *` 对本地拦截的资源是安全的：这些内容本来就只
- * 服务于同一个虚拟域，且来源是本机模块目录。
+ * 实测 `Access-Control-Allow-Origin: *` 在该机型（HyperOS 3 + WebView 157）上
+ * 仍被拒绝——同源请求默认带凭证，通配符在凭证模式下不合法。所以这里回显页面
+ * 自己所在的精确 Origin 并允许凭证；配合 [WEBUI_HTML_SHIM] 去掉动态 link 的
+ * crossorigin，两条路都留好。
  */
 internal val WEBUI_RESPONSE_HEADERS: Map<String, String> =
     mapOf(
-        "Access-Control-Allow-Origin" to "*",
+        "Access-Control-Allow-Origin" to "https://$WEB_DOMAIN",
+        "Access-Control-Allow-Credentials" to "true",
         "Access-Control-Allow-Methods" to "GET, OPTIONS",
         "Access-Control-Allow-Headers" to "*",
         // 模块更新后同名资源可能内容变化，别让 WebView 用旧缓存
         "Cache-Control" to "no-cache",
     )
+
+/**
+ * 注入到模块页 `<head>` 的引导脚本：让动态创建的 `<link>` 忽略 `crossorigin`。
+ *
+ * Vite 的预加载 helper 会给 CSS 链接设 `link.crossOrigin = ''`，请求因此变成
+ * CORS 模式；而 WebView 的拦截响应在 CORS 模式下会失败（见 [WEBUI_RESPONSE_HEADERS]）。
+ * 静态写在 HTML 里的样式链接没有 crossorigin，走 no-cors，从来都是好的——
+ * 这里把动态链接拉回同一条路。模块页的资源全在本机同一个虚拟域内，
+ * 去掉 crossorigin 不影响任何合法用法。
+ */
+private val WEBUI_HTML_SHIM =
+    """
+    <script>(function(){try{
+      Object.defineProperty(HTMLLinkElement.prototype,'crossOrigin',{
+        configurable:true,enumerable:true,get:function(){return null;},
+        set:function(){}
+      });
+    }catch(e){}})();</script>
+    """.trimIndent().replace("\n", "")
+
+/**
+ * 把引导脚本插进 HTML：`<head>` 后面优先，否则紧跟在 doctype 之后。
+ * 经典脚本先于模块脚本（deferred）执行，所以一定赶在 Vite 的预加载之前。
+ */
+internal fun injectWebUiShim(html: String): String {
+    if (html.contains(WEBUI_HTML_SHIM)) return html
+    val headIndex =
+        listOf("<head>", "<head ", "<HEAD>", "<HEAD ", "<head\n").map { html.indexOf(it) }
+            .filter { it >= 0 }
+            .minOrNull()
+    if (headIndex != null) {
+        val insertAt = html.indexOf('>', headIndex) + 1
+        if (insertAt > 0) return html.substring(0, insertAt) + WEBUI_HTML_SHIM + html.substring(insertAt)
+    }
+    val doctypeEnd = html.indexOf('>')
+    if (html.take(15).contains("<!doctype", ignoreCase = true) && doctypeEnd >= 0) {
+        return html.substring(0, doctypeEnd + 1) + WEBUI_HTML_SHIM + html.substring(doctypeEnd + 1)
+    }
+    return WEBUI_HTML_SHIM + html
+}
 
 /**
  * 把请求路径解析成 webroot 内的绝对路径，越界返回 null。
@@ -73,6 +116,8 @@ internal fun resolveWithinWebRoot(
  */
 class SuFilePathHandler(
     private val webRoot: java.io.File,
+    /** true 表示 [webRoot] 是应用自己的缓存副本，直接读文件即可，不需要 root。 */
+    private val directRead: Boolean = false,
     private val insetsSupplier: () -> WebInsets,
 ) : WebViewAssetLoader.PathHandler {
     /** 命中即直接返回；`bytes == null` 表示“确认不存在”。 */
@@ -114,10 +159,17 @@ class SuFilePathHandler(
         path: String,
     ): Entry {
         val mime = guessMimeType(path)
-        val bytes =
+        val raw =
             runCatching { readAll(targetPath, path) }
                 .onFailure { Log.e(TAG, "处理请求失败：$path", it) }
                 .getOrNull()
+        val bytes =
+            when {
+                // 0 字节按不存在处理：`su -c cat` 读不到文件时给的是空流而不是失败
+                raw == null || raw.isEmpty() -> null
+                mime == "text/html" -> injectWebUiShim(String(raw, Charsets.UTF_8)).toByteArray(Charsets.UTF_8)
+                else -> raw
+            }
         return Entry(mime, bytes)
     }
 
@@ -125,6 +177,11 @@ class SuFilePathHandler(
         targetPath: String,
         path: String,
     ): ByteArray? {
+        // 缓存副本：应用自己可读，普通文件读取，不碰 su / 提权
+        if (directRead) {
+            val direct = runCatching { java.io.File(targetPath).readBytes() }.getOrNull()
+            if (direct != null) return decompressIfSvgz(direct, path)
+        }
         // 原生读取：内核在线时子进程 setresuid 临时提权，比每次 fork 一个
         // `su -c cat`（多一次 su 二进制 exec + shell 解析 + SELinux 域迁移）便宜一个量级。
         // null（内核不在线 / 不是 manager / 文件超上限）回退到 su 流式读取。

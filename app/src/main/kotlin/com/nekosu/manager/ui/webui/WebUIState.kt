@@ -58,6 +58,15 @@ class WebUIState {
     lateinit var modDir: String
     var moduleName: String = ""
 
+    /**
+     * 实际用于提供页面的目录：一般是 webroot 预拷到 cacheDir 的副本
+     * （应用自己可读，请求路径不再需要 root），拷贝失败时退回模块原始 webroot。
+     */
+    lateinit var webRoot: java.io.File
+
+    /** [webRoot] 是不是可直接读取的缓存副本；false 时走 root 读取兜底。 */
+    var webRootStaged: Boolean = false
+
     var uiEvent by mutableStateOf<WebUIEvent>(WebUIEvent.Loading)
 
     /** fullScreen(true) 之后由 Compose 侧把 insets 换算好写进来。 */

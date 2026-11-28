@@ -163,8 +163,44 @@ private suspend fun validateModule(
 
     webUIState.modDir = modDir
     webUIState.moduleName = moduleInfo.name
+
+    // 把 webroot 预拷到 cacheDir：WebView 的每个子资源请求都走 shouldInterceptRequest，
+    // 在 /data/adb 上只能靠 root 读（fork 提权或 su，二者都会被别的 su 命令串行拖住，
+    // bugreport 里首屏资源被卡了 4–8 秒）。拷一份到应用自己的目录后就是普通文件读取，
+    // 既快也不受 su 通道影响；拷不动时退回原目录的 root 读取。
+    val staged = stageWebRoot(activity, moduleId, webRoot)
+    webUIState.webRoot = staged ?: webRoot
+    webUIState.webRootStaged = staged != null
     return null
 }
+
+/**
+ * 用一条 root 命令把整套 webroot 拷到应用缓存目录。
+ *
+ * `cp -R` 与 `mkdir`/`rm` 都是 toybox 自带命令，不依赖模块装了什么。
+ * 返回 null 表示拷贝失败（没有 root、目录异常），调用方退回直接 root 读取。
+ */
+private suspend fun stageWebRoot(
+    activity: WebUIActivity,
+    moduleId: String,
+    webRoot: java.io.File,
+): java.io.File? =
+    withContext(Dispatchers.IO) {
+        val dest = java.io.File(activity.cacheDir, "webui/${moduleId.replace('/', '_')}")
+        val destPath = dest.absolutePath.replace("'", "'\\''")
+        val srcPath = webRoot.absolutePath.replace("'", "'\\''")
+        val command =
+            "rm -rf '$destPath' && mkdir -p '$destPath' && " +
+                "cp -R '$srcPath/.' '$destPath/' && chmod -R u+rwX '$destPath' && echo __ok__"
+        val staged =
+            runCatching { com.nekosu.manager.data.RootShell.exec(command) }.getOrNull()
+        if (staged != null && staged.output.contains("__ok__") && dest.listFiles()?.isNotEmpty() == true) {
+            dest
+        } else {
+            Log.w(TAG, "webroot 预拷贝失败，退回 root 直读：$command")
+            null
+        }
+    }
 
 /** webroot 是否真的存在：应用进程读不了 /data/adb，只能问 root shell。 */
 private suspend fun rootDirExists(dir: java.io.File): Boolean =
